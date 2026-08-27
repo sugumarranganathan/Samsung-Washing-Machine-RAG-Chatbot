@@ -1,7 +1,6 @@
-fastapi
-uvicorn
-pydantic
-qdrant-client
 sentence-transformers
+huggingface-hub
+qdrant-client
 groq
+fastapi
 mangum
