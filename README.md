@@ -1,20 +1,8 @@
 <div align="center">
 
-# 🧺 Samsung Washing Machine Technical Support AI
+### Samsung Washing Machine RAG Chatbot — Serverless AWS Lambda & RAG
 
-### 🤖 RAG-Powered • Serverless • Cloud-Deployed • CI/CD Automated
-
-**AI-powered technical support chatbot for Samsung washing machine documentation**
-
-[![Python](https://img.shields.io/badge/Python-3.12-blue?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-REST_API-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![RAG](https://img.shields.io/badge/RAG-Enabled-7C3AED?style=for-the-badge)](#-retrieval-augmented-generation)
-[![Qdrant](https://img.shields.io/badge/Qdrant-Vector_DB-FF4F64?style=for-the-badge)](https://qdrant.tech/)
-[![Groq](https://img.shields.io/badge/Groq-LLM-F55036?style=for-the-badge)](https://groq.com/)
-[![AWS Lambda](https://img.shields.io/badge/AWS-Lambda-FF9900?style=for-the-badge&logo=awslambda&logoColor=white)](https://aws.amazon.com/lambda/)
-[![API Gateway](https://img.shields.io/badge/AWS-API_Gateway-FF4F8B?style=for-the-badge&logo=amazonapigateway&logoColor=white)](https://aws.amazon.com/api-gateway/)
-[![Docker](https://img.shields.io/badge/Docker-Containerized-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
-[![GitHub Actions](https://img.shields.io/badge/GitHub-Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/features/actions)
+**RAG • Qdrant Vector Search • Groq LLM • FastAPI • Docker • AWS Lambda • Amazon API Gateway • Amazon ECR • GitHub Actions CI/CD • DevOps • MLOps**
 
 ### 🌐 [LIVE DEMO](https://sugumarranganathan.github.io/Samsung-Washing-Machine-RAG-Chatbot/)
 
