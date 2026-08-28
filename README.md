@@ -679,28 +679,6 @@ The project focuses on:
 
 ---
 
-# 🔮 Future Enhancements
-
-Potential future improvements include:
-
-- 🔐 API authentication and stronger API protection
-- 📊 CloudWatch monitoring and alerting
-- 💰 Advanced AWS cost controls
-- 🧪 Expanded automated API/RAG testing
-- 📈 RAG quality and response evaluation
-- 🗃️ Server-side conversation persistence
-- ☁️ AWS-hosted frontend using Amazon S3 + CloudFront
-- 📦 More advanced MLOps evaluation and versioning
-
----
-
-# ⚠️ Important Project Disclaimer
-
-This project is an **educational and portfolio demonstration** of a RAG-based technical-support chatbot.
-
-The included washing-machine documentation is synthetic test content and is **not an official Samsung manual**. The chatbot should not be treated as an authoritative source for operating or servicing a real appliance.
-
----
 
 # 👨‍💻 Developed By
 
