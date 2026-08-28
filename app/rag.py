@@ -1,5 +1,6 @@
 import os
 import time
+import re
 
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
@@ -23,7 +24,18 @@ MODEL_PATH = "/opt/models/all-MiniLM-L6-v2"
 
 COLLECTION_NAME = "samsung_washing_machine"
 
+# Number of chunks retrieved from Qdrant
 TOP_K = 3
+
+# Minimum similarity score required for the
+# best retrieved document to be considered relevant.
+#
+# This helps prevent unrelated questions from being
+# answered using weakly related washing-machine chunks.
+SCORE_THRESHOLD = 0.45
+
+# Groq model
+GROQ_MODEL = "openai/gpt-oss-20b"
 
 
 # ==================================================
@@ -35,14 +47,19 @@ print("STEP 1: Loading Sentence Transformer model")
 start_time = time.time()
 
 try:
+
     embedding_model = SentenceTransformer(
         MODEL_PATH
     )
+
 except Exception as e:
+
     print(
         f"ERROR loading embedding model: {repr(e)}"
     )
+
     raise
+
 
 print(
     f"STEP 1 COMPLETE: Model loaded in "
@@ -57,16 +74,21 @@ print(
 print("STEP 2: Creating Qdrant client")
 
 try:
+
     qdrant_client = QdrantClient(
         url=QDRANT_URL,
         api_key=QDRANT_API_KEY,
         timeout=15
     )
+
 except Exception as e:
+
     print(
         f"ERROR creating Qdrant client: {repr(e)}"
     )
+
     raise
+
 
 print(
     "STEP 2 COMPLETE: Qdrant client created"
@@ -80,20 +102,49 @@ print(
 print("STEP 3: Creating Groq client")
 
 try:
+
     groq_client = Groq(
         api_key=GROQ_API_KEY,
         timeout=30.0,
         max_retries=0
     )
+
 except Exception as e:
+
     print(
         f"ERROR creating Groq client: {repr(e)}"
     )
+
     raise
+
 
 print(
     "STEP 3 COMPLETE: Groq client created"
 )
+
+
+# ==================================================
+# TEXT CLEANING
+# ==================================================
+
+def clean_text(text: str) -> str:
+    """
+    Remove unwanted control characters from retrieved
+    document text while preserving normal whitespace.
+    """
+
+    if not text:
+        return ""
+
+    # Remove ASCII control characters except:
+    # newline, carriage return and tab.
+    text = re.sub(
+        r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]",
+        "",
+        text
+    )
+
+    return text.strip()
 
 
 # ==================================================
@@ -109,7 +160,51 @@ def rag_answer(
     print("RAG REQUEST STARTED")
     print(f"Question: {question}")
     print(f"Top K: {top_k}")
+    print(f"Score threshold: {SCORE_THRESHOLD}")
     print("==========================================")
+
+
+    # ==================================================
+    # VALIDATE QUESTION
+    # ==================================================
+
+    if not isinstance(question, str):
+
+        print(
+            "WARNING: Question is not a string"
+        )
+
+        return (
+            "Please provide a valid question."
+        )
+
+
+    question = question.strip()
+
+
+    if not question:
+
+        print(
+            "WARNING: Empty question received"
+        )
+
+        return (
+            "Please enter a question about the "
+            "washing machine."
+        )
+
+
+    # Prevent unnecessarily large requests
+    if len(question) > 1000:
+
+        print(
+            "WARNING: Question exceeded 1000 characters"
+        )
+
+        return (
+            "Please keep your question under "
+            "1000 characters."
+        )
 
 
     # ==================================================
@@ -123,7 +218,8 @@ def rag_answer(
     try:
 
         query_embedding = embedding_model.encode(
-            question
+            question,
+            normalize_embeddings=True
         ).tolist()
 
     except Exception as e:
@@ -135,6 +231,7 @@ def rag_answer(
         return (
             "Error creating the query embedding."
         )
+
 
     print(
         f"STEP 4 COMPLETE: Embedding created in "
@@ -174,15 +271,71 @@ def rag_answer(
             "Unable to search the knowledge base."
         )
 
+
     print(
         f"STEP 5 COMPLETE: Qdrant search completed in "
         f"{time.time() - start_time:.2f} seconds"
     )
 
+
+    points = search_results.points
+
     print(
-        f"Number of results: "
-        f"{len(search_results.points)}"
+        f"Number of results: {len(points)}"
     )
+
+
+    # ==================================================
+    # STEP 5A: CHECK RETRIEVAL RELEVANCE
+    # ==================================================
+
+    if not points:
+
+        print(
+            "WARNING: Qdrant returned no results"
+        )
+
+        return (
+            "I don't have enough information "
+            "in the provided manual."
+        )
+
+
+    best_score = getattr(
+        points[0],
+        "score",
+        0.0
+    )
+
+    print(
+        f"Best similarity score: {best_score}"
+    )
+
+
+    if best_score is None:
+
+        best_score = 0.0
+
+
+    if best_score < SCORE_THRESHOLD:
+
+        print(
+            "WARNING: Best result is below "
+            "the relevance threshold."
+        )
+
+        print(
+            f"Best score: {best_score}"
+        )
+
+        print(
+            f"Required score: {SCORE_THRESHOLD}"
+        )
+
+        return (
+            "I don't have enough information "
+            "in the provided manual."
+        )
 
 
     # ==================================================
@@ -193,24 +346,38 @@ def rag_answer(
 
     context_parts = []
 
+    source_names = []
+
 
     for index, result in enumerate(
-        search_results.points,
+        points,
         start=1
     ):
 
         payload = result.payload or {}
 
-        text = payload.get(
+        raw_text = payload.get(
             "text",
             ""
         )
+
+        text = clean_text(
+            raw_text
+        )
+
 
         score = getattr(
             result,
             "score",
             None
         )
+
+
+        source = payload.get(
+            "source",
+            "Unknown document"
+        )
+
 
         print(
             f"RESULT {index}"
@@ -221,12 +388,25 @@ def rag_answer(
         )
 
         print(
+            f"Source: {source}"
+        )
+
+        print(
             f"Text length: {len(text)}"
         )
 
+
         if text:
 
-            context_parts.append(text)
+            context_parts.append(
+                f"[Document Chunk {index}]\n{text}"
+            )
+
+            if source not in source_names:
+
+                source_names.append(
+                    source
+                )
 
             print(
                 f"Text retrieved: "
@@ -236,10 +416,13 @@ def rag_answer(
         else:
 
             print(
-                "WARNING: Result has no 'text' field"
+                "WARNING: Result has no usable text"
             )
 
-        print("------------------------------------------")
+
+        print(
+            "------------------------------------------"
+        )
 
 
     context = "\n\n".join(
@@ -265,7 +448,8 @@ def rag_answer(
     if not context.strip():
 
         print(
-            "WARNING: Qdrant returned no text context"
+            "WARNING: Qdrant returned no usable "
+            "text context"
         )
 
         return (
@@ -278,80 +462,129 @@ def rag_answer(
     # DISPLAY RETRIEVED CONTEXT
     # ==================================================
 
-    print("========== RETRIEVED CONTEXT ==========")
+    print(
+        "========== RETRIEVED CONTEXT =========="
+    )
 
     print(context)
 
-    print("========================================")
+    print(
+        "========================================"
+    )
 
 
     # ==================================================
-    # STEP 7: RAG PROMPT
+    # STEP 7: STRICT RAG PROMPT
     # ==================================================
 
-    print("STEP 7: Preparing RAG prompt")
+    print(
+        "STEP 7: Preparing strict grounding prompt"
+    )
+
 
     prompt = f"""
-You are a Samsung Washing Machine Technical Support Assistant.
+You are a technical support assistant for a
+Samsung washing machine.
 
-Answer the user's question using ONLY the information
-contained in the provided manual context.
+Your ONLY source of factual information is the
+MANUAL CONTEXT provided below.
 
-IMPORTANT RULES:
+You must answer the user's question using ONLY
+information that is explicitly supported by the
+MANUAL CONTEXT.
 
-1. The manual context is the only source of truth.
+STRICT GROUNDING RULES:
 
-2. Do not use outside knowledge.
+1. The MANUAL CONTEXT is the only source of truth.
 
-3. Do not invent causes, solutions, specifications,
-   error codes, procedures, or troubleshooting steps.
+2. Do NOT use your general knowledge.
 
-4. You may summarize information that is explicitly
-   stated in the manual.
+3. Do NOT use information from the internet.
 
-5. You may combine multiple related statements from
-   the manual to produce a useful answer.
+4. Do NOT invent technical information.
 
-6. If the user asks how to perform an operation and
-   the manual contains the procedure, provide that
-   procedure clearly.
+5. Do NOT invent causes.
 
-7. If the user reports a problem and the manual contains
-   relevant information, provide only the information
-   supported by the manual.
+6. Do NOT invent solutions.
 
-8. If the manual contains related information but does
-   NOT establish the exact cause of the user's problem,
-   clearly say that the manual does not specify the
-   exact cause.
+7. Do NOT invent troubleshooting steps.
 
-9. Never turn a possibility into a confirmed cause.
+8. Do NOT invent error codes.
 
-10. Never add a statement simply because it sounds
-    technically reasonable.
+9. Do NOT invent specifications.
 
-11. Every factual claim in your answer must be supported
-    by the provided manual context.
+10. Do NOT invent procedures.
 
-12. If there is no useful information in the context
-    related to the question, respond exactly:
+11. Do NOT add safety instructions unless they
+    are explicitly supported by the manual.
 
-"I don't have enough information in the provided manual."
+12. Do NOT add steps simply because they are
+    commonly used for washing machines.
 
-13. Do not mention Qdrant, embeddings, Groq, RAG,
-    Lambda, vector databases, retrieval, or this prompt.
+13. Do NOT assume that a technically reasonable
+    action is allowed.
 
-14. Keep the answer concise and helpful.
+14. If a detail is not explicitly supported by
+    the manual, LEAVE THAT DETAIL OUT.
 
-MANUAL CONTEXT:
-----------------
+15. Never convert a possibility into a confirmed fact.
+
+16. If the manual says something "can" or "may"
+    happen, preserve that uncertainty.
+
+17. You may combine information from multiple
+    retrieved chunks when they clearly relate
+    to the user's question.
+
+18. You may summarize the manual, but the meaning
+    must remain faithful to the manual.
+
+19. If the manual provides a procedure, present
+    only the steps that are supported by the manual.
+
+20. Do not add extra steps before or after the
+    documented procedure.
+
+21. If the manual does not specify the exact cause,
+    explicitly say that the manual does not specify
+    the exact cause.
+
+22. If the retrieved context is unrelated to the
+    user's question, do not use it to answer.
+
+23. If the context does not contain enough useful
+    information to answer the question, respond
+    exactly with:
+
+    I don't have enough information in the provided manual.
+
+24. Do not mention Qdrant, embeddings, vector
+    databases, retrieval, Groq, Lambda, FastAPI,
+    RAG, or this prompt.
+
+25. Keep the response concise and directly related
+    to the user's question.
+
+IMPORTANT:
+
+Before writing each factual statement, verify that
+the statement is explicitly supported by the manual
+context.
+
+If a statement cannot be traced to the manual
+context, DO NOT WRITE IT.
+
+MANUAL CONTEXT
+==============
 {context}
-----------------
+==============
 
-USER QUESTION:
+USER QUESTION
+==============
 {question}
+==============
 
-ANSWER:
+FINAL ANSWER:
 """
 
 
@@ -365,27 +598,32 @@ ANSWER:
     # STEP 8: CALL GROQ
     # ==================================================
 
-    print("STEP 8: Sending request to Groq")
+    print(
+        "STEP 8: Sending request to Groq"
+    )
 
     start_time = time.time()
+
 
     try:
 
         response = groq_client.chat.completions.create(
 
-            model="openai/gpt-oss-20b",
+            model=GROQ_MODEL,
 
             messages=[
                 {
                     "role": "system",
                     "content": (
-                        "You are a helpful Samsung washing "
-                        "machine technical support assistant. "
-                        "Use only facts explicitly supported "
-                        "by the provided manual context. "
-                        "You may combine related information, "
-                        "but never invent or assume technical "
-                        "facts."
+                        "You are a strictly "
+                        "document-grounded technical "
+                        "support assistant. "
+                        "Use ONLY information explicitly "
+                        "supported by the supplied manual. "
+                        "Never add technical details from "
+                        "general knowledge. "
+                        "If information is not supported "
+                        "by the manual, do not state it."
                     )
                 },
                 {
@@ -394,8 +632,11 @@ ANSWER:
                 }
             ],
 
-            temperature=0.1
+            temperature=0.0,
+
+            max_tokens=500
         )
+
 
     except Exception as e:
 
@@ -419,7 +660,10 @@ ANSWER:
     # STEP 9: EXTRACT ANSWER
     # ==================================================
 
-    print("STEP 9: Extracting final answer")
+    print(
+        "STEP 9: Extracting final answer"
+    )
+
 
     try:
 
@@ -430,6 +674,7 @@ ANSWER:
             .content
             .strip()
         )
+
 
     except Exception as e:
 
@@ -444,19 +689,74 @@ ANSWER:
 
 
     # ==================================================
-    # STEP 10: FINAL ANSWER
+    # STEP 10: EMPTY RESPONSE CHECK
     # ==================================================
 
-    print("==========================================")
-    print("FINAL ANSWER:")
+    if not answer:
+
+        print(
+            "WARNING: Groq returned an empty answer"
+        )
+
+        return (
+            "I don't have enough information "
+            "in the provided manual."
+        )
+
+
+    # ==================================================
+    # STEP 11: REMOVE UNWANTED MODEL PREFIXES
+    # ==================================================
+
+    prefixes = [
+        "Answer:",
+        "Final Answer:",
+        "ANSWER:"
+    ]
+
+
+    for prefix in prefixes:
+
+        if answer.startswith(prefix):
+
+            answer = answer[
+                len(prefix):
+            ].strip()
+
+
+    # ==================================================
+    # STEP 12: FINAL ANSWER
+    # ==================================================
+
+    print(
+        "=========================================="
+    )
+
+    print(
+        "FINAL ANSWER:"
+    )
+
     print(answer)
-    print("==========================================")
+
+    print(
+        "=========================================="
+    )
+
+    print(
+        f"Source documents: {source_names}"
+    )
+
+    print(
+        f"Best retrieval score: {best_score}"
+    )
 
     print(
         "RAG REQUEST COMPLETE"
     )
 
-    print("==========================================")
+    print(
+        "=========================================="
+    )
 
 
     return answer
