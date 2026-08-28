@@ -35,19 +35,14 @@ print("STEP 1: Loading Sentence Transformer model")
 start_time = time.time()
 
 try:
-
     embedding_model = SentenceTransformer(
         MODEL_PATH
     )
-
 except Exception as e:
-
     print(
         f"ERROR loading embedding model: {repr(e)}"
     )
-
     raise
-
 
 print(
     f"STEP 1 COMPLETE: Model loaded in "
@@ -62,21 +57,16 @@ print(
 print("STEP 2: Creating Qdrant client")
 
 try:
-
     qdrant_client = QdrantClient(
         url=QDRANT_URL,
         api_key=QDRANT_API_KEY,
         timeout=15
     )
-
 except Exception as e:
-
     print(
         f"ERROR creating Qdrant client: {repr(e)}"
     )
-
     raise
-
 
 print(
     "STEP 2 COMPLETE: Qdrant client created"
@@ -90,21 +80,16 @@ print(
 print("STEP 3: Creating Groq client")
 
 try:
-
     groq_client = Groq(
         api_key=GROQ_API_KEY,
         timeout=30.0,
         max_retries=0
     )
-
 except Exception as e:
-
     print(
         f"ERROR creating Groq client: {repr(e)}"
     )
-
     raise
-
 
 print(
     "STEP 3 COMPLETE: Groq client created"
@@ -151,7 +136,6 @@ def rag_answer(
             "Error creating the query embedding."
         )
 
-
     print(
         f"STEP 4 COMPLETE: Embedding created in "
         f"{time.time() - start_time:.2f} seconds"
@@ -174,13 +158,9 @@ def rag_answer(
     try:
 
         search_results = qdrant_client.query_points(
-
             collection_name=COLLECTION_NAME,
-
             query=query_embedding,
-
             limit=top_k,
-
             with_payload=True
         )
 
@@ -193,7 +173,6 @@ def rag_answer(
         return (
             "Unable to search the knowledge base."
         )
-
 
     print(
         f"STEP 5 COMPLETE: Qdrant search completed in "
@@ -233,7 +212,6 @@ def rag_answer(
             None
         )
 
-
         print(
             f"RESULT {index}"
         )
@@ -246,18 +224,20 @@ def rag_answer(
             f"Text length: {len(text)}"
         )
 
-
         if text:
 
             context_parts.append(text)
-
-            # Print retrieved text for debugging
 
             print(
                 f"Text retrieved: "
                 f"{text[:500]}"
             )
 
+        else:
+
+            print(
+                "WARNING: Result has no 'text' field"
+            )
 
         print("------------------------------------------")
 
@@ -279,7 +259,7 @@ def rag_answer(
 
 
     # ==================================================
-    # STEP 6.1: CHECK CONTEXT
+    # CHECK CONTEXT
     # ==================================================
 
     if not context.strip():
@@ -295,7 +275,7 @@ def rag_answer(
 
 
     # ==================================================
-    # STEP 6.2: PRINT CONTEXT
+    # DISPLAY RETRIEVED CONTEXT
     # ==================================================
 
     print("========== RETRIEVED CONTEXT ==========")
@@ -308,59 +288,71 @@ def rag_answer(
     # ==================================================
     # STEP 7: RAG PROMPT
     # ==================================================
-        
-            print("STEP 7: Preparing RAG prompt")
-        
-        prompt = f"""
-        You are a Samsung Washing Machine Technical Support Assistant.
-        
-        Your job is to answer the user's question using ONLY facts
-        explicitly stated in the provided manual context.
-        
-        STRICT RULES:
-        
-        1. Do not use outside knowledge.
-        
-        2. Do not assume or infer facts that are not explicitly written
-           in the manual.
-        
-        3. Do not convert a possible condition into a definite cause.
-        
-        4. Do not add troubleshooting steps that are not present in
-           the manual.
-        
-        5. You may summarize or combine information from the context,
-           but every factual claim in your answer must be supported
-           directly by the context.
-        
-        6. If the context provides related information but does not
-           establish the exact cause of the user's problem, clearly
-           say that the manual does not specify the exact cause.
-        
-        7. If the answer is completely unavailable in the context,
-           respond exactly:
-           "I don't have enough information in the provided manual."
-        
-        8. Never claim that the washing machine "will not start",
-           "cannot start", or has a specific failure unless the manual
-           explicitly states this.
-        
-        9. Do not mention Qdrant, embeddings, Groq, RAG, Lambda,
-           retrieval, or the internal system.
-        
-        MANUAL CONTEXT:
-        ----------------
-        {context}
-        ----------------
-        
-        USER QUESTION:
-        {question}
-        
-        Provide a concise answer based strictly on the manual.
-        
-        ANSWER:
-        """
 
+    print("STEP 7: Preparing RAG prompt")
+
+    prompt = f"""
+You are a Samsung Washing Machine Technical Support Assistant.
+
+Answer the user's question using ONLY the information
+contained in the provided manual context.
+
+IMPORTANT RULES:
+
+1. The manual context is the only source of truth.
+
+2. Do not use outside knowledge.
+
+3. Do not invent causes, solutions, specifications,
+   error codes, procedures, or troubleshooting steps.
+
+4. You may summarize information that is explicitly
+   stated in the manual.
+
+5. You may combine multiple related statements from
+   the manual to produce a useful answer.
+
+6. If the user asks how to perform an operation and
+   the manual contains the procedure, provide that
+   procedure clearly.
+
+7. If the user reports a problem and the manual contains
+   relevant information, provide only the information
+   supported by the manual.
+
+8. If the manual contains related information but does
+   NOT establish the exact cause of the user's problem,
+   clearly say that the manual does not specify the
+   exact cause.
+
+9. Never turn a possibility into a confirmed cause.
+
+10. Never add a statement simply because it sounds
+    technically reasonable.
+
+11. Every factual claim in your answer must be supported
+    by the provided manual context.
+
+12. If there is no useful information in the context
+    related to the question, respond exactly:
+
+"I don't have enough information in the provided manual."
+
+13. Do not mention Qdrant, embeddings, Groq, RAG,
+    Lambda, vector databases, retrieval, or this prompt.
+
+14. Keep the answer concise and helpful.
+
+MANUAL CONTEXT:
+----------------
+{context}
+----------------
+
+USER QUESTION:
+{question}
+
+ANSWER:
+"""
 
 
     print(
@@ -370,7 +362,7 @@ def rag_answer(
 
 
     # ==================================================
-    # STEP 8: SEND REQUEST TO GROQ
+    # STEP 8: CALL GROQ
     # ==================================================
 
     print("STEP 8: Sending request to Groq")
@@ -384,26 +376,22 @@ def rag_answer(
             model="openai/gpt-oss-20b",
 
             messages=[
-
                 {
                     "role": "system",
-
                     "content": (
                         "You are a helpful Samsung washing "
                         "machine technical support assistant. "
-                        "Answer using only the provided manual "
-                        "context. You may combine related "
-                        "information from the context, but "
-                        "never invent technical information."
+                        "Use only facts explicitly supported "
+                        "by the provided manual context. "
+                        "You may combine related information, "
+                        "but never invent or assume technical "
+                        "facts."
                     )
                 },
-
                 {
                     "role": "user",
-
                     "content": prompt
                 }
-
             ],
 
             temperature=0.1
@@ -464,7 +452,9 @@ def rag_answer(
     print(answer)
     print("==========================================")
 
-    print("RAG REQUEST COMPLETE")
+    print(
+        "RAG REQUEST COMPLETE"
+    )
 
     print("==========================================")
 
