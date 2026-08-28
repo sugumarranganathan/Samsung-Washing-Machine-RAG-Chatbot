@@ -20,9 +20,21 @@ MODEL_PATH = "/opt/models/all-MiniLM-L6-v2"
 
 COLLECTION_NAME = "samsung_washing_machine"
 
-TOP_K = 3
+# Retrieve more candidates so natural customer wording has
+# a better chance of finding the correct manual section.
+TOP_K = 8
 
-SCORE_THRESHOLD = 0.45
+# Semantic threshold for clearly washing-machine-related
+# questions.
+DOMAIN_SCORE_THRESHOLD = 0.30
+
+# Stronger threshold for questions without obvious
+# washing-machine/domain signals.
+GENERAL_SCORE_THRESHOLD = 0.45
+
+# When lexical evidence is found in retrieved manual text,
+# allow the result even if semantic score is slightly lower.
+LEXICAL_SCORE_THRESHOLD = 0.15
 
 GROQ_MODEL = "openai/gpt-oss-20b"
 
@@ -34,25 +46,251 @@ MAX_RETRIES = 2
 
 MAX_QUESTION_LENGTH = 1000
 
+# Number of retrieved chunks supplied to the LLM.
+MAX_CONTEXT_CHUNKS = 5
+
+# Maximum characters per individual manual chunk.
+MAX_CHUNK_LENGTH = 5000
+
 
 # ============================================================
 # LAZY-LOADED OBJECTS
-# ============================================================
-#
-# IMPORTANT:
-#
-# Do NOT import SentenceTransformer, QdrantClient or Groq
-# at the top of this file.
-#
-# Lambda should start without loading heavy ML libraries.
-#
-# The objects are created only when the first request needs
-# them.
 # ============================================================
 
 embedding_model = None
 qdrant_client = None
 groq_client = None
+
+
+# ============================================================
+# COMMON WASHING-MACHINE TERMS
+# ============================================================
+
+WASHING_MACHINE_TERMS = {
+    "washing",
+    "washer",
+    "machine",
+    "laundry",
+    "clothes",
+    "clothing",
+    "drum",
+    "cycle",
+    "wash",
+    "rinse",
+    "spin",
+    "detergent",
+    "door",
+    "lock",
+    "locked",
+    "unlock",
+    "water",
+    "drain",
+    "draining",
+    "drainage",
+    "hose",
+    "filter",
+    "vibration",
+    "vibrating",
+    "vibrate",
+    "shaking",
+    "shake",
+    "noise",
+    "noisy",
+    "sound",
+    "error",
+    "code",
+    "start",
+    "starting",
+    "run",
+    "running",
+    "operate",
+    "operation",
+    "clean",
+    "cleaning",
+    "maintenance",
+    "leak",
+    "leaking",
+    "temperature",
+    "spin",
+    "load",
+}
+
+
+# ============================================================
+# DOMAIN / INTENT TERMS
+# ============================================================
+
+DOMAIN_PHRASES = [
+    "washing machine",
+    "washing-machine",
+    "washer",
+    "laundry machine",
+    "wash cycle",
+    "spin cycle",
+    "rinse cycle",
+    "wash program",
+    "washing cycle",
+    "machine door",
+    "washer door",
+    "drain hose",
+    "drain filter",
+    "error code",
+]
+
+
+# ============================================================
+# SYMPTOM / TOPIC GROUPS
+# ============================================================
+
+TOPIC_GROUPS = {
+    "vibration": {
+        "vibration",
+        "vibrating",
+        "vibrate",
+        "shaking",
+        "shake",
+        "shakes",
+        "wobble",
+        "wobbling",
+        "unstable",
+    },
+
+    "noise": {
+        "noise",
+        "noisy",
+        "sound",
+        "sounds",
+        "loud",
+        "rattling",
+        "rattle",
+        "banging",
+        "bang",
+        "humming",
+        "hum",
+    },
+
+    "door": {
+        "door",
+        "locked",
+        "lock",
+        "unlock",
+        "unlocked",
+        "open",
+        "opened",
+        "opening",
+        "close",
+        "closed",
+    },
+
+    "water_supply": {
+        "water",
+        "supply",
+        "inlet",
+        "inlet-hose",
+        "tap",
+        "faucet",
+        "fill",
+        "filling",
+    },
+
+    "drain": {
+        "drain",
+        "draining",
+        "drainage",
+        "drainage",
+        "hose",
+        "filter",
+        "pump",
+        "water-out",
+        "empty",
+    },
+
+    "start_run": {
+        "start",
+        "starting",
+        "run",
+        "running",
+        "work",
+        "working",
+        "operate",
+        "operating",
+        "turn",
+        "turning",
+        "begin",
+        "beginning",
+    },
+
+    "cycle": {
+        "cycle",
+        "wash",
+        "washing",
+        "rinse",
+        "spin",
+        "program",
+        "mode",
+        "setting",
+        "settings",
+    },
+
+    "maintenance": {
+        "clean",
+        "cleaning",
+        "maintenance",
+        "maintain",
+        "filter",
+        "care",
+        "service",
+    },
+
+    "error": {
+        "error",
+        "code",
+        "fault",
+        "display",
+        "message",
+        "warning",
+    },
+}
+
+
+# ============================================================
+# ERROR CODE DETECTION
+# ============================================================
+
+def extract_error_codes(question: str):
+    """
+    Detect common washing-machine error-code patterns.
+
+    This function does NOT invent the meaning of an error code.
+    It only detects the code so Qdrant can search the manual
+    more effectively.
+    """
+
+    if not question:
+        return []
+
+    normalized = question.upper()
+
+    patterns = [
+        r"\b\d+[A-Z]\b",
+        r"\b[A-Z]{1,3}\d{1,3}\b",
+        r"\b[A-Z]{1,3}\b(?=\s+ERROR\b)",
+        r"\bERROR\s+CODE\s+[A-Z0-9]+\b",
+    ]
+
+    found = []
+
+    for pattern in patterns:
+        matches = re.findall(pattern, normalized)
+
+        for match in matches:
+
+            code = match.strip()
+
+            if code not in found:
+                found.append(code)
+
+    return found
 
 
 # ============================================================
@@ -75,8 +313,7 @@ def get_embedding_model():
     """
     Lazy-load SentenceTransformer.
 
-    This prevents the heavy ML library and model from
-    being loaded during Lambda initialization.
+    Heavy ML dependencies are loaded only when needed.
     """
 
     global embedding_model
@@ -92,13 +329,9 @@ def get_embedding_model():
 
     try:
 
-        # IMPORTANT:
-        # Import only when the model is actually needed.
         from sentence_transformers import SentenceTransformer
 
-        print(
-            "SentenceTransformer library imported"
-        )
+        print("SentenceTransformer library imported")
 
         if not os.path.exists(MODEL_PATH):
 
@@ -154,13 +387,10 @@ def get_qdrant_client():
     if qdrant_client is not None:
         return qdrant_client
 
-    print(
-        "Creating Qdrant client..."
-    )
+    print("Creating Qdrant client...")
 
     try:
 
-        # Lazy import
         from qdrant_client import QdrantClient
 
         qdrant_client = QdrantClient(
@@ -201,13 +431,10 @@ def get_groq_client():
     if groq_client is not None:
         return groq_client
 
-    print(
-        "Creating Groq client..."
-    )
+    print("Creating Groq client...")
 
     try:
 
-        # Lazy import
         from groq import Groq
 
         groq_client = Groq(
@@ -256,13 +483,257 @@ def clean_text(text: str) -> str:
 
 
 # ============================================================
+# NORMALIZE QUERY
+# ============================================================
+
+def normalize_query(question: str) -> str:
+    """
+    Normalize natural customer wording.
+
+    This does not add factual information.
+    It only creates search-friendly wording.
+    """
+
+    text = question.lower().strip()
+
+    replacements = {
+        "washing-machine": "washing machine",
+        "washer": "washing machine",
+        "washingmachine": "washing machine",
+        "not running": "not run",
+        "won't run": "not run",
+        "wont run": "not run",
+        "doesn't run": "not run",
+        "doesnt run": "not run",
+        "not working": "not work",
+        "won't work": "not work",
+        "wont work": "not work",
+        "doesn't work": "not work",
+        "doesnt work": "not work",
+        "not opened": "door not open",
+        "door not opening": "door not open",
+        "door won't open": "door not open",
+        "door wont open": "door not open",
+        "door doesn't open": "door not open",
+        "door doesnt open": "door not open",
+        "not going out": "not draining",
+        "water not going out": "water not draining",
+        "water staying": "water remains",
+        "making noise": "noise",
+        "noise is coming": "washing machine noise",
+        "making a noise": "washing machine noise",
+        "shaking badly": "washing machine shaking",
+        "machine shaking": "washing machine shaking",
+        "machine vibrating": "washing machine vibrating",
+    }
+
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text
+    )
+
+    return text.strip()
+
+
+# ============================================================
+# DETECT DOMAIN INTENT
+# ============================================================
+
+def detect_domain_intent(question: str):
+    """
+    Determine whether the question appears related to
+    washing-machine operation/support.
+
+    This is intentionally broad so short natural-language
+    customer questions are not incorrectly rejected.
+    """
+
+    normalized = normalize_query(question)
+
+    # Strong explicit domain phrases.
+    for phrase in DOMAIN_PHRASES:
+
+        if phrase in normalized:
+            return True
+
+    words = set(
+        re.findall(
+            r"[a-z0-9]+",
+            normalized.lower()
+        )
+    )
+
+    # Any strong machine/support topic is enough.
+    for topic_words in TOPIC_GROUPS.values():
+
+        if words.intersection(topic_words):
+            return True
+
+    # Explicit error code.
+    if extract_error_codes(question):
+        return True
+
+    return False
+
+
+# ============================================================
+# DETECT TOPICS
+# ============================================================
+
+def detect_topics(question: str):
+    """
+    Detect likely customer intent/topic.
+    """
+
+    normalized = normalize_query(question)
+
+    words = set(
+        re.findall(
+            r"[a-z0-9]+",
+            normalized.lower()
+        )
+    )
+
+    topics = []
+
+    for topic, topic_words in TOPIC_GROUPS.items():
+
+        if words.intersection(topic_words):
+            topics.append(topic)
+
+    return topics
+
+
+# ============================================================
+# BUILD SEARCH QUERY
+# ============================================================
+
+def build_search_query(question: str) -> str:
+    """
+    Build a stronger semantic-search query.
+
+    Important:
+    This function does NOT supply factual answers.
+    It only adds domain/search terminology.
+    """
+
+    normalized = normalize_query(question)
+
+    topics = detect_topics(question)
+
+    error_codes = extract_error_codes(question)
+
+    additions = []
+
+    # Make short customer questions more searchable.
+    if detect_domain_intent(question):
+
+        additions.append(
+            "washing machine"
+        )
+
+    for topic in topics:
+
+        if topic == "vibration":
+            additions.append(
+                "vibration shaking"
+            )
+
+        elif topic == "noise":
+            additions.append(
+                "noise sound"
+            )
+
+        elif topic == "door":
+            additions.append(
+                "door lock opening"
+            )
+
+        elif topic == "water_supply":
+            additions.append(
+                "water supply inlet"
+            )
+
+        elif topic == "drain":
+            additions.append(
+                "drain drainage hose filter"
+            )
+
+        elif topic == "start_run":
+            additions.append(
+                "machine start operation"
+            )
+
+        elif topic == "cycle":
+            additions.append(
+                "wash cycle operation"
+            )
+
+        elif topic == "maintenance":
+            additions.append(
+                "maintenance cleaning"
+            )
+
+        elif topic == "error":
+            additions.append(
+                "error code troubleshooting"
+            )
+
+    # Error code is retained exactly.
+    if error_codes:
+
+        additions.append(
+            " ".join(error_codes)
+        )
+
+        additions.append(
+            "washing machine error code troubleshooting"
+        )
+
+    search_query = (
+        normalized
+        + " "
+        + " ".join(additions)
+    )
+
+    search_query = re.sub(
+        r"\s+",
+        " ",
+        search_query
+    ).strip()
+
+    print(
+        f"Original query: {question}"
+    )
+
+    print(
+        f"Normalized query: {normalized}"
+    )
+
+    print(
+        f"Search query: {search_query}"
+    )
+
+    print(
+        f"Detected topics: {topics}"
+    )
+
+    print(
+        f"Detected error codes: {error_codes}"
+    )
+
+    return search_query
+
+
+# ============================================================
 # VALIDATE QUESTION
 # ============================================================
 
 def validate_question(question):
-    """
-    Validate customer question.
-    """
 
     if not isinstance(question, str):
 
@@ -275,7 +746,7 @@ def validate_question(question):
             "Please provide a valid question."
         )
 
-    question = question.strip()
+    question = clean_text(question)
 
     if not question:
 
@@ -309,9 +780,6 @@ def validate_question(question):
 # ============================================================
 
 def create_query_embedding(question):
-    """
-    Convert customer question into vector embedding.
-    """
 
     print(
         "STEP 1: Creating query embedding"
@@ -386,9 +854,6 @@ def search_qdrant(
     query_embedding,
     top_k=TOP_K
 ):
-    """
-    Search the Samsung washing-machine knowledge base.
-    """
 
     print(
         "STEP 2: Searching Qdrant"
@@ -451,12 +916,379 @@ def search_qdrant(
 
 
 # ============================================================
+# LEXICAL MATCHING
+# ============================================================
+
+def lexical_match_score(
+    question: str,
+    text: str
+) -> float:
+    """
+    Calculate lightweight lexical overlap.
+
+    This is not used as the only retrieval method.
+    It helps protect against semantic retrieval missing
+    short phrases such as error codes.
+    """
+
+    if not question or not text:
+        return 0.0
+
+    question_lower = normalize_query(
+        question
+    ).lower()
+
+    text_lower = text.lower()
+
+    question_words = set(
+        re.findall(
+            r"[a-z0-9]+",
+            question_lower
+        )
+    )
+
+    text_words = set(
+        re.findall(
+            r"[a-z0-9]+",
+            text_lower
+        )
+    )
+
+    if not question_words or not text_words:
+        return 0.0
+
+    overlap = (
+        question_words.intersection(
+            text_words
+        )
+    )
+
+    score = (
+        len(overlap)
+        / max(len(question_words), 1)
+    )
+
+    # Strong exact error-code evidence.
+    error_codes = extract_error_codes(
+        question
+    )
+
+    if error_codes:
+
+        for code in error_codes:
+
+            if code.lower() in text_lower:
+
+                score = max(
+                    score,
+                    0.90
+                )
+
+    return min(score, 1.0)
+
+
+# ============================================================
+# SCORE RETRIEVED RESULTS
+# ============================================================
+
+def score_retrieved_points(
+    question,
+    points
+):
+    """
+    Add lexical evidence to Qdrant semantic scores.
+
+    Returns ranked candidates.
+    """
+
+    ranked = []
+
+    domain_question = detect_domain_intent(
+        question
+    )
+
+    error_codes = extract_error_codes(
+        question
+    )
+
+    topics = detect_topics(question)
+
+    print(
+        f"Domain question: {domain_question}"
+    )
+
+    print(
+        f"Topics: {topics}"
+    )
+
+    print(
+        f"Error codes: {error_codes}"
+    )
+
+    for index, point in enumerate(
+        points,
+        start=1
+    ):
+
+        payload = point.payload or {}
+
+        text = clean_text(
+            payload.get("text", "")
+        )
+
+        semantic_score = getattr(
+            point,
+            "score",
+            0.0
+        )
+
+        if semantic_score is None:
+            semantic_score = 0.0
+
+        lexical_score = lexical_match_score(
+            question,
+            text
+        )
+
+        combined_score = (
+            (0.75 * float(semantic_score))
+            +
+            (0.25 * float(lexical_score))
+        )
+
+        exact_error_match = False
+
+        if error_codes and text:
+
+            text_lower = text.lower()
+
+            exact_error_match = any(
+                code.lower() in text_lower
+                for code in error_codes
+            )
+
+        candidate = {
+            "point": point,
+            "text": text,
+            "semantic_score": float(
+                semantic_score
+            ),
+            "lexical_score": float(
+                lexical_score
+            ),
+            "combined_score": float(
+                combined_score
+            ),
+            "exact_error_match": (
+                exact_error_match
+            ),
+            "domain_question": (
+                domain_question
+            ),
+        }
+
+        ranked.append(candidate)
+
+        print(
+            "------------------------------------------"
+        )
+
+        print(
+            f"Candidate {index}"
+        )
+
+        print(
+            f"Semantic score: "
+            f"{semantic_score:.4f}"
+        )
+
+        print(
+            f"Lexical score: "
+            f"{lexical_score:.4f}"
+        )
+
+        print(
+            f"Combined score: "
+            f"{combined_score:.4f}"
+        )
+
+        print(
+            f"Exact error match: "
+            f"{exact_error_match}"
+        )
+
+    ranked.sort(
+        key=lambda item: (
+            item["exact_error_match"],
+            item["combined_score"]
+        ),
+        reverse=True
+    )
+
+    return ranked
+
+
+# ============================================================
+# DETERMINE RELEVANCE
+# ============================================================
+
+def is_relevant(
+    question,
+    ranked_candidates
+):
+    """
+    Determine whether retrieved manual content is useful.
+
+    Rules:
+
+    1. Exact error-code match is accepted.
+    2. Clearly domain-related questions get a lower
+       semantic threshold.
+    3. Strong lexical evidence can rescue a slightly
+       lower semantic result.
+    4. Generic/unrelated questions retain the stronger
+       threshold.
+    """
+
+    if not ranked_candidates:
+        return False
+
+    best = ranked_candidates[0]
+
+    semantic_score = best[
+        "semantic_score"
+    ]
+
+    lexical_score = best[
+        "lexical_score"
+    ]
+
+    combined_score = best[
+        "combined_score"
+    ]
+
+    exact_error_match = best[
+        "exact_error_match"
+    ]
+
+    domain_question = best[
+        "domain_question"
+    ]
+
+    print("==========================================")
+    print("RELEVANCE EVALUATION")
+    print("==========================================")
+
+    print(
+        f"Best semantic score: "
+        f"{semantic_score:.4f}"
+    )
+
+    print(
+        f"Best lexical score: "
+        f"{lexical_score:.4f}"
+    )
+
+    print(
+        f"Best combined score: "
+        f"{combined_score:.4f}"
+    )
+
+    print(
+        f"Domain question: "
+        f"{domain_question}"
+    )
+
+    print(
+        f"Exact error match: "
+        f"{exact_error_match}"
+    )
+
+    # --------------------------------------------------------
+    # RULE 1: Exact error-code match
+    # --------------------------------------------------------
+
+    if exact_error_match:
+
+        print(
+            "RELEVANCE ACCEPTED: "
+            "exact error-code evidence"
+        )
+
+        return True
+
+    # --------------------------------------------------------
+    # RULE 2: Strong lexical evidence
+    # --------------------------------------------------------
+
+    if (
+        domain_question
+        and lexical_score
+        >= LEXICAL_SCORE_THRESHOLD
+        and combined_score
+        >= 0.28
+    ):
+
+        print(
+            "RELEVANCE ACCEPTED: "
+            "domain + lexical evidence"
+        )
+
+        return True
+
+    # --------------------------------------------------------
+    # RULE 3: Domain question
+    # --------------------------------------------------------
+
+    if domain_question:
+
+        if (
+            semantic_score
+            >= DOMAIN_SCORE_THRESHOLD
+        ):
+
+            print(
+                "RELEVANCE ACCEPTED: "
+                "domain semantic threshold"
+            )
+
+            return True
+
+    # --------------------------------------------------------
+    # RULE 4: Generic question
+    # --------------------------------------------------------
+
+    if (
+        semantic_score
+        >= GENERAL_SCORE_THRESHOLD
+    ):
+
+        print(
+            "RELEVANCE ACCEPTED: "
+            "general semantic threshold"
+        )
+
+        return True
+
+    print(
+        "RELEVANCE REJECTED"
+    )
+
+    return False
+
+
+# ============================================================
 # BUILD CONTEXT
 # ============================================================
 
-def build_context(points):
+def build_context(
+    ranked_candidates,
+    max_chunks=MAX_CONTEXT_CHUNKS
+):
     """
-    Extract useful text from Qdrant results.
+    Build clean manual context.
+
+    Only useful retrieved chunks are passed to the LLM.
     """
 
     print(
@@ -467,58 +1299,66 @@ def build_context(points):
 
     source_names = []
 
-    for index, point in enumerate(
-        points,
+    selected = ranked_candidates[
+        :max_chunks
+    ]
+
+    for index, candidate in enumerate(
+        selected,
         start=1
     ):
 
-        payload = point.payload or {}
+        text = candidate["text"]
 
-        raw_text = payload.get(
-            "text",
-            ""
-        )
+        if not text:
+            continue
 
-        text = clean_text(
-            raw_text
-        )
+        # Prevent one unusually large chunk from
+        # consuming the entire prompt.
+        if len(text) > MAX_CHUNK_LENGTH:
 
-        score = getattr(
-            point,
-            "score",
-            0.0
-        )
+            text = text[
+                :MAX_CHUNK_LENGTH
+            ]
 
-        source = payload.get(
+        source = candidate[
+            "point"
+        ].payload.get(
             "source",
             "manual"
         )
 
+        semantic_score = candidate[
+            "semantic_score"
+        ]
+
+        lexical_score = candidate[
+            "lexical_score"
+        ]
+
         print(
-            f"Retrieved chunk {index}"
+            f"Context chunk {index}"
         )
 
         print(
-            f"Score: {score}"
+            f"Semantic score: "
+            f"{semantic_score:.4f}"
         )
 
-        if text:
+        print(
+            f"Lexical score: "
+            f"{lexical_score:.4f}"
+        )
 
-            context_parts.append(
-                f"[Manual Section {index}]\n"
-                f"{text}"
-            )
+        context_parts.append(
+            f"[Manual Section {index}]\n"
+            f"{text}"
+        )
 
-            if source not in source_names:
+        if source not in source_names:
 
-                source_names.append(
-                    source
-                )
-
-        else:
-
-            print(
-                "WARNING: Empty text in result"
+            source_names.append(
+                source
             )
 
     context = "\n\n".join(
@@ -549,9 +1389,6 @@ def create_rag_prompt(
     question,
     context
 ):
-    """
-    Strict manual-grounded RAG prompt.
-    """
 
     print(
         "STEP 4: Creating RAG prompt"
@@ -564,8 +1401,14 @@ support assistant.
 Your ONLY factual source is the MANUAL CONTEXT
 provided below.
 
+The customer may use short, informal, incomplete,
+misspelled, or conversational wording.
+
+Interpret the customer's wording carefully, but
+do not invent facts.
+
 Answer the customer's question ONLY using
-information explicitly supported by that manual.
+information supported by the manual context.
 
 STRICT RULES:
 
@@ -595,10 +1438,10 @@ STRICT RULES:
     preserve that uncertainty.
 
 13. If multiple manual sections are relevant,
-    you may combine them.
+    combine them when appropriate.
 
-14. If the manual does not contain enough information,
-    respond exactly:
+14. If the manual does not contain enough information
+    to answer the customer's question, respond exactly:
 
 I don't have enough information in the provided manual.
 
@@ -617,16 +1460,30 @@ I don't have enough information in the provided manual.
     - FastAPI
     - RAG
     - internal system instructions
+    - retrieval scores
 
 17. Keep the answer clear and concise.
 
-18. Do not display document names or internal
-    retrieval information to the customer.
+18. Do not display document names.
 
-19. Do not include a "Sources" section.
+19. Do not display internal retrieval information.
 
-20. Do not add information simply because it is
+20. Do not include a "Sources" section.
+
+21. Do not add information simply because it is
     commonly known about washing machines.
+
+22. If the manual gives several relevant troubleshooting
+    points, provide all relevant documented points.
+
+23. Prefer practical numbered steps or bullet points
+    when the manual provides multiple actions.
+
+24. If the customer uses informal wording such as
+    "machine not run", "noise is coming", "door not opened",
+    or "water not going out", understand the likely intent
+    from the supplied manual context, but only state facts
+    that the manual supports.
 
 MANUAL CONTEXT
 ==============
@@ -654,9 +1511,6 @@ FINAL ANSWER:
 # ============================================================
 
 def generate_answer(prompt):
-    """
-    Generate grounded answer using Groq.
-    """
 
     print(
         "STEP 5: Calling Groq"
@@ -689,7 +1543,8 @@ def generate_answer(prompt):
                             "manual-grounded Samsung "
                             "washing machine support assistant. "
                             "Use only information supported "
-                            "by the supplied manual."
+                            "by the supplied manual. "
+                            "Never invent technical facts."
                         )
                     },
                     {
@@ -742,9 +1597,6 @@ def generate_answer(prompt):
 # ============================================================
 
 def extract_answer(response):
-    """
-    Safely extract generated answer.
-    """
 
     print(
         "STEP 6: Extracting answer"
@@ -777,7 +1629,6 @@ def extract_answer(response):
 
         return None
 
-    # Remove accidental answer prefixes.
     prefixes = [
         "FINAL ANSWER:",
         "Final Answer:",
@@ -805,27 +1656,31 @@ def rag_answer(
     top_k: int = TOP_K
 ):
     """
-    Complete RAG pipeline.
+    Complete improved RAG pipeline.
 
     Customer Question
             ↓
        Validation
             ↓
-      Lazy ML Loading
+      Query Normalization
             ↓
-       Embedding
+       Query Expansion
+            ↓
+        Embedding
             ↓
        Qdrant Search
             ↓
-      Score Checking
+    Semantic + Lexical Ranking
             ↓
-        Context
+      Relevance Validation
             ↓
-       Strict Prompt
+        Manual Context
+            ↓
+        Strict Prompt
             ↓
           Groq
             ↓
-      Final Answer
+       Final Answer
     """
 
     request_start = time.time()
@@ -844,8 +1699,13 @@ def rag_answer(
     )
 
     print(
-        f"Score threshold: "
-        f"{SCORE_THRESHOLD}"
+        f"Domain threshold: "
+        f"{DOMAIN_SCORE_THRESHOLD}"
+    )
+
+    print(
+        f"General threshold: "
+        f"{GENERAL_SCORE_THRESHOLD}"
     )
 
     print("==========================================")
@@ -855,8 +1715,8 @@ def rag_answer(
     # STEP 0: VALIDATE
     # ========================================================
 
-    question, validation_error = validate_question(
-        question
+    question, validation_error = (
+        validate_question(question)
     )
 
     if validation_error:
@@ -865,13 +1725,24 @@ def rag_answer(
 
 
     # ========================================================
+    # STEP 0.5: BUILD SEARCH QUERY
+    # ========================================================
+
+    search_query = build_search_query(
+        question
+    )
+
+
+    # ========================================================
     # STEP 1: EMBEDDING
     # ========================================================
 
     try:
 
-        query_embedding = create_query_embedding(
-            question
+        query_embedding = (
+            create_query_embedding(
+                search_query
+            )
         )
 
     except Exception as e:
@@ -939,25 +1810,27 @@ def rag_answer(
 
 
     # ========================================================
-    # STEP 4: RELEVANCE CHECK
+    # STEP 4: RANK RESULTS
     # ========================================================
 
-    best_score = getattr(
-        points[0],
-        "score",
-        0.0
+    ranked_candidates = (
+        score_retrieved_points(
+            question,
+            points
+        )
     )
 
-    if best_score is None:
 
-        best_score = 0.0
+    # ========================================================
+    # STEP 5: RELEVANCE CHECK
+    # ========================================================
 
-    print(
-        f"Best similarity score: "
-        f"{best_score}"
+    relevant = is_relevant(
+        question,
+        ranked_candidates
     )
 
-    if best_score < SCORE_THRESHOLD:
+    if not relevant:
 
         print(
             "Question rejected because the "
@@ -971,13 +1844,15 @@ def rag_answer(
 
 
     # ========================================================
-    # STEP 5: BUILD CONTEXT
+    # STEP 6: BUILD CONTEXT
     # ========================================================
 
     try:
 
-        context, source_names = build_context(
-            points
+        context, source_names = (
+            build_context(
+                ranked_candidates
+            )
         )
 
     except Exception as e:
@@ -1021,7 +1896,7 @@ def rag_answer(
 
 
     # ========================================================
-    # STEP 6: CREATE PROMPT
+    # STEP 7: CREATE PROMPT
     # ========================================================
 
     prompt = create_rag_prompt(
@@ -1031,7 +1906,7 @@ def rag_answer(
 
 
     # ========================================================
-    # STEP 7: GROQ
+    # STEP 8: GROQ
     # ========================================================
 
     try:
@@ -1054,7 +1929,7 @@ def rag_answer(
 
 
     # ========================================================
-    # STEP 8: EXTRACT ANSWER
+    # STEP 9: EXTRACT ANSWER
     # ========================================================
 
     answer = extract_answer(
@@ -1074,8 +1949,11 @@ def rag_answer(
     # ========================================================
 
     total_time = (
-        time.time() - request_start
+        time.time()
+        - request_start
     )
+
+    best = ranked_candidates[0]
 
     print("")
     print("==========================================")
@@ -1083,7 +1961,18 @@ def rag_answer(
     print("==========================================")
 
     print(
-        f"Best score: {best_score}"
+        f"Best semantic score: "
+        f"{best['semantic_score']:.4f}"
+    )
+
+    print(
+        f"Best lexical score: "
+        f"{best['lexical_score']:.4f}"
+    )
+
+    print(
+        f"Best combined score: "
+        f"{best['combined_score']:.4f}"
     )
 
     print(
@@ -1097,7 +1986,8 @@ def rag_answer(
     )
 
     print(
-        "==========================================")
+        "=========================================="
+    )
 
 
     # ========================================================
