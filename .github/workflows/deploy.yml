@@ -63,6 +63,9 @@ jobs:
 
     steps:
 
+      # ======================================
+      # CHECKOUT
+      # ======================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -131,6 +134,30 @@ jobs:
         run: |
           aws lambda wait function-updated \
             --function-name "$LAMBDA_FUNCTION_NAME"
+
+
+      # ======================================
+      # VERIFY LAMBDA DEPLOYMENT
+      # ======================================
+      - name: Verify Lambda deployment
+        run: |
+          echo "======================================"
+          echo "Lambda deployment verification"
+          echo "======================================"
+
+          aws lambda get-function \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --query 'Configuration.[FunctionName,LastModified,State,LastUpdateStatus]' \
+            --output table
+
+          echo "======================================"
+          echo "Lambda image information"
+          echo "======================================"
+
+          aws lambda get-function \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --query 'Code.[ImageUri,ResolvedImageUri]' \
+            --output text
 
 
       # ======================================
