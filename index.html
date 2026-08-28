@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,6 +8,7 @@
     <title>Samsung Washing Machine AI Support</title>
 
     <style>
+
         * {
             box-sizing: border-box;
             margin: 0;
@@ -34,6 +36,8 @@
             overflow: hidden;
         }
 
+        /* ================= HEADER ================= */
+
         .header {
             background: #1428a0;
             color: white;
@@ -50,6 +54,8 @@
             font-size: 13px;
             opacity: 0.9;
         }
+
+        /* ================= CHAT BOX ================= */
 
         .chat-box {
             flex: 1;
@@ -77,6 +83,7 @@
             border-radius: 12px;
             line-height: 1.5;
             white-space: pre-wrap;
+            word-wrap: break-word;
         }
 
         .user .message-content {
@@ -92,6 +99,15 @@
             border-bottom-left-radius: 3px;
         }
 
+        /* ================= TYPING ================= */
+
+        .typing {
+            font-style: italic;
+            color: #777;
+        }
+
+        /* ================= INPUT ================= */
+
         .input-area {
             display: flex;
             padding: 15px;
@@ -106,6 +122,10 @@
             border-radius: 8px;
             outline: none;
             font-size: 15px;
+        }
+
+        #question:focus {
+            border-color: #1428a0;
         }
 
         #send-button {
@@ -128,32 +148,78 @@
             cursor: not-allowed;
         }
 
-        .typing {
-            font-style: italic;
-            color: #777;
+        /* ================= MOBILE ================= */
+
+        @media (max-width: 600px) {
+
+            .chat-container {
+                width: 100%;
+                height: 100vh;
+                border-radius: 0;
+            }
+
+            .header h1 {
+                font-size: 19px;
+            }
+
+            .message-content {
+                max-width: 90%;
+            }
+
+            #send-button {
+                padding: 0 16px;
+            }
         }
+
     </style>
+
 </head>
+
 
 <body>
 
+
 <div class="chat-container">
 
+
+    <!-- ================= HEADER ================= -->
+
     <div class="header">
-        <h1>Samsung Washing Machine AI Support</h1>
-        <p>RAG-based Technical Support Assistant</p>
+
+        <h1>
+            Samsung Washing Machine AI Support
+        </h1>
+
+        <p>
+            RAG-based Technical Support Assistant
+        </p>
+
     </div>
 
-    <div class="chat-box" id="chat-box">
+
+    <!-- ================= CHAT ================= -->
+
+    <div
+        class="chat-box"
+        id="chat-box"
+    >
 
         <div class="message bot">
+
             <div class="message-content">
-                Hello! 👋
-                How can I help you with your Samsung washing machine?
+
+Hello! 👋
+
+How can I help you with your Samsung washing machine?
+
             </div>
+
         </div>
 
     </div>
+
+
+    <!-- ================= INPUT ================= -->
 
     <div class="input-area">
 
@@ -164,116 +230,296 @@
             autocomplete="off"
         >
 
-        <button id="send-button">
+        <button
+            id="send-button"
+        >
             Send
         </button>
 
     </div>
 
+
 </div>
 
+
+
 <script>
+
+
+/* ==================================================
+   API CONFIGURATION
+   ================================================== */
 
 const API_URL =
     "https://uji26268tj.execute-api.us-east-1.amazonaws.com/chat";
 
 
-const chatBox = document.getElementById("chat-box");
-const questionInput = document.getElementById("question");
-const sendButton = document.getElementById("send-button");
+/* ==================================================
+   DOM ELEMENTS
+   ================================================== */
 
+const chatBox =
+    document.getElementById("chat-box");
+
+const questionInput =
+    document.getElementById("question");
+
+const sendButton =
+    document.getElementById("send-button");
+
+
+/* ==================================================
+   ADD MESSAGE
+   ================================================== */
 
 function addMessage(message, type) {
 
-    const messageDiv = document.createElement("div");
+    const messageDiv =
+        document.createElement("div");
 
-    messageDiv.className = `message ${type}`;
+    messageDiv.className =
+        "message " + type;
 
-    const contentDiv = document.createElement("div");
 
-    contentDiv.className = "message-content";
+    const contentDiv =
+        document.createElement("div");
 
-    contentDiv.textContent = message;
+    contentDiv.className =
+        "message-content";
 
-    messageDiv.appendChild(contentDiv);
 
-    chatBox.appendChild(messageDiv);
+    contentDiv.textContent =
+        message;
 
-    chatBox.scrollTop = chatBox.scrollHeight;
+
+    messageDiv.appendChild(
+        contentDiv
+    );
+
+
+    chatBox.appendChild(
+        messageDiv
+    );
+
+
+    chatBox.scrollTop =
+        chatBox.scrollHeight;
+
+
+    return messageDiv;
 }
 
 
+/* ==================================================
+   SEND MESSAGE
+   ================================================== */
+
 async function sendMessage() {
 
-    const question = questionInput.value.trim();
+
+    const question =
+        questionInput.value.trim();
+
+
+    /* ----------------------------------------------
+       CHECK EMPTY QUESTION
+       ---------------------------------------------- */
 
     if (!question) {
+
         return;
+
     }
 
-    addMessage(question, "user");
+
+    /* ----------------------------------------------
+       SHOW USER MESSAGE
+       ---------------------------------------------- */
+
+    addMessage(
+        question,
+        "user"
+    );
+
+
+    /* ----------------------------------------------
+       CLEAR INPUT
+       ---------------------------------------------- */
 
     questionInput.value = "";
 
+
+    /* ----------------------------------------------
+       DISABLE SEND BUTTON
+       ---------------------------------------------- */
+
     sendButton.disabled = true;
 
-    addMessage("Thinking...", "bot");
+
+    /* ----------------------------------------------
+       SHOW THINKING MESSAGE
+       ---------------------------------------------- */
 
     const thinkingMessage =
-        chatBox.lastElementChild;
+        addMessage(
+            "Thinking...",
+            "bot"
+        );
+
+
+    thinkingMessage
+        .querySelector(".message-content")
+        .classList.add("typing");
 
 
     try {
 
-        const response = await fetch(API_URL, {
 
-            method: "POST",
+        /* ==========================================
+           API REQUEST
+           ========================================== */
 
-            headers: {
-                "Content-Type": "application/json"
-            },
+        const response =
+            await fetch(
+                API_URL,
+                {
+                    method: "POST",
 
-            body: JSON.stringify({
-                query: question
-            })
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-        });
+                    body: JSON.stringify({
+                        query: question
+                    })
+                }
+            );
 
+
+        /* ==========================================
+           CHECK HTTP RESPONSE
+           ========================================== */
 
         if (!response.ok) {
 
             throw new Error(
-                `HTTP error: ${response.status}`
+                "HTTP Error: " +
+                response.status
             );
 
         }
 
 
-        const data = await response.json();
+        /* ==========================================
+           READ JSON RESPONSE
+           ========================================== */
+
+        const data =
+            await response.json();
 
 
-        thinkingMessage
-            .querySelector(".message-content")
-            .textContent = data.answer;
+        console.log(
+            "API Response:",
+            data
+        );
 
 
-    } catch (error) {
+        /* ==========================================
+           CHECK ANSWER
+           ========================================== */
 
-        console.error(error);
+        if (
+            !data ||
+            typeof data.answer !== "string"
+        ) {
 
-        thinkingMessage
-            .querySelector(".message-content")
-            .textContent =
-                "Sorry, I could not connect to the AI service.";
+            throw new Error(
+                "Invalid API response"
+            );
+
+        }
+
+
+        /* ==========================================
+           DISPLAY AI ANSWER
+           ========================================== */
+
+        const answerElement =
+            thinkingMessage
+                .querySelector(
+                    ".message-content"
+                );
+
+
+        answerElement.classList.remove(
+            "typing"
+        );
+
+
+        answerElement.textContent =
+            data.answer;
+
 
     }
 
 
-    sendButton.disabled = false;
+    catch (error) {
 
-    questionInput.focus();
+
+        /* ==========================================
+           ERROR HANDLING
+           ========================================== */
+
+        console.error(
+            "API Error:",
+            error
+        );
+
+
+        const answerElement =
+            thinkingMessage
+                .querySelector(
+                    ".message-content"
+                );
+
+
+        answerElement.classList.remove(
+            "typing"
+        );
+
+
+        answerElement.textContent =
+            "Sorry, I could not connect to the AI service. Please try again.";
+
+
+    }
+
+
+    finally {
+
+
+        /* ==========================================
+           ENABLE SEND BUTTON
+           ========================================== */
+
+        sendButton.disabled = false;
+
+
+        questionInput.focus();
+
+
+        chatBox.scrollTop =
+            chatBox.scrollHeight;
+
+    }
+
 }
 
+
+/* ==================================================
+   SEND BUTTON CLICK
+   ================================================== */
 
 sendButton.addEventListener(
     "click",
@@ -281,11 +527,17 @@ sendButton.addEventListener(
 );
 
 
+/* ==================================================
+   ENTER KEY
+   ================================================== */
+
 questionInput.addEventListener(
     "keydown",
     function(event) {
 
         if (event.key === "Enter") {
+
+            event.preventDefault();
 
             sendMessage();
 
@@ -294,7 +546,17 @@ questionInput.addEventListener(
     }
 );
 
+
+/* ==================================================
+   INITIAL FOCUS
+   ================================================== */
+
+questionInput.focus();
+
+
 </script>
 
+
 </body>
+
 </html>
