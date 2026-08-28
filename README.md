@@ -1,6 +1,6 @@
 <div align="center">
 
-<h1 align="center">🧺 Samsung Washing Machine RAG Chatbot</h1>
+<h1 align="center"> Samsung Washing Machine RAG Chatbot</h1>
 
 <p align="center">
   <strong>⚡ Serverless AWS Lambda & RAG</strong><br>
