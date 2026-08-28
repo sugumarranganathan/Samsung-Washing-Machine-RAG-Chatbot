@@ -1,165 +1,197 @@
 import os
+import time
 
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
 from groq import Groq
 
 
-# --------------------------------------------------
-# Environment variables
-# --------------------------------------------------
+# ==================================================
+# ENVIRONMENT VARIABLES
+# ==================================================
 
 QDRANT_URL = os.environ["QDRANT_URL"]
 QDRANT_API_KEY = os.environ["QDRANT_API_KEY"]
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 
 
-# --------------------------------------------------
-# Local Sentence Transformer model
-# --------------------------------------------------
+# ==================================================
+# CONFIGURATION
+# ==================================================
 
 MODEL_PATH = "/opt/models/all-MiniLM-L6-v2"
 
-print("🔄 Loading embedding model...")
+COLLECTION_NAME = "samsung_washing_machine"
+
+
+# ==================================================
+# LOAD EMBEDDING MODEL
+# ==================================================
+
+print("STEP 1: Loading Sentence Transformer model")
+
+start_time = time.time()
 
 embedding_model = SentenceTransformer(
     MODEL_PATH
 )
 
-print("✅ Embedding model loaded successfully")
+print(
+    f"STEP 1 COMPLETE: Model loaded in "
+    f"{time.time() - start_time:.2f} seconds"
+)
 
 
-# --------------------------------------------------
-# Qdrant client
-# --------------------------------------------------
+# ==================================================
+# QDRANT CLIENT
+# ==================================================
 
-print("🔄 Creating Qdrant client...")
+print("STEP 2: Creating Qdrant client")
 
 qdrant_client = QdrantClient(
     url=QDRANT_URL,
     api_key=QDRANT_API_KEY,
-    timeout=60
+    timeout=15
 )
 
-print("✅ Qdrant client created")
+print("STEP 2 COMPLETE: Qdrant client created")
 
 
-# --------------------------------------------------
-# Groq client
-# --------------------------------------------------
+# ==================================================
+# GROQ CLIENT
+# ==================================================
 
-print("🔄 Creating Groq client...")
+print("STEP 3: Creating Groq client")
 
 groq_client = Groq(
-    api_key=GROQ_API_KEY
+    api_key=GROQ_API_KEY,
+    timeout=30.0,
+    max_retries=0
 )
 
-print("✅ Groq client created")
+print("STEP 3 COMPLETE: Groq client created")
 
 
-# --------------------------------------------------
-# Qdrant collection
-# --------------------------------------------------
-
-COLLECTION_NAME = "samsung_washing_machine"
-
-
-# --------------------------------------------------
-# RAG function
-# --------------------------------------------------
+# ==================================================
+# RAG FUNCTION
+# ==================================================
 
 def rag_answer(question: str, top_k: int = 3):
 
-    print("========================================")
-    print("🚀 RAG request started")
-    print("Question:", question)
-    print("========================================")
+    print("==========================================")
+    print("RAG REQUEST STARTED")
+    print(f"Question: {question}")
+    print("==========================================")
 
 
-    # --------------------------------------------------
-    # Create query embedding
-    # --------------------------------------------------
+    # ----------------------------------------------
+    # CREATE EMBEDDING
+    # ----------------------------------------------
 
-    print("🔄 Creating query embedding...")
+    print("STEP 4: Creating query embedding")
 
-    query_embedding = embedding_model.encode(
-        question
-    ).tolist()
+    start_time = time.time()
 
-    print("✅ Query embedding created")
-    print("Embedding dimension:", len(query_embedding))
+    try:
 
+        query_embedding = embedding_model.encode(
+            question
+        ).tolist()
 
-    # --------------------------------------------------
-    # Search Qdrant
-    # --------------------------------------------------
+    except Exception as e:
 
-    print("🔎 Searching Qdrant...")
-    print("Collection:", COLLECTION_NAME)
-    print("Top K:", top_k)
+        print(f"ERROR in embedding: {repr(e)}")
 
-    search_results = qdrant_client.query_points(
-        collection_name=COLLECTION_NAME,
-        query=query_embedding,
-        limit=top_k,
-        with_payload=True
-    )
-
-    print("✅ Qdrant search completed")
+        return "Error creating query embedding."
 
     print(
-        "Number of results:",
-        len(search_results.points)
+        f"STEP 4 COMPLETE: Embedding created in "
+        f"{time.time() - start_time:.2f} seconds"
+    )
+
+    print(f"Embedding dimensions: {len(query_embedding)}")
+
+
+    # ----------------------------------------------
+    # QDRANT SEARCH
+    # ----------------------------------------------
+
+    print("STEP 5: Searching Qdrant")
+
+    start_time = time.time()
+
+    try:
+
+        search_results = qdrant_client.query_points(
+            collection_name=COLLECTION_NAME,
+            query=query_embedding,
+            limit=top_k,
+            with_payload=True
+        )
+
+    except Exception as e:
+
+        print(f"ERROR in Qdrant: {repr(e)}")
+
+        return "Unable to search the knowledge base."
+
+
+    print(
+        f"STEP 5 COMPLETE: Qdrant search completed in "
+        f"{time.time() - start_time:.2f} seconds"
+    )
+
+    print(
+        f"Number of results: "
+        f"{len(search_results.points)}"
     )
 
 
-    # --------------------------------------------------
-    # Display retrieved results
-    # --------------------------------------------------
+    # ----------------------------------------------
+    # BUILD CONTEXT
+    # ----------------------------------------------
+
+    print("STEP 6: Building context")
 
     context_parts = []
 
-    for i, result in enumerate(search_results.points):
 
-        print("----------------------------------------")
-        print(f"RESULT {i + 1}")
-
-        print("Score:", result.score)
+    for index, result in enumerate(
+        search_results.points,
+        start=1
+    ):
 
         payload = result.payload or {}
 
-        print("Payload:", payload)
-
         text = payload.get("text", "")
+
+        print(
+            f"Result {index}: "
+            f"score={result.score}, "
+            f"text_length={len(text)}"
+        )
 
         if text:
 
             context_parts.append(text)
 
-            print(
-                "Text retrieved:",
-                text[:500]
-            )
-
-        else:
-
-            print("⚠️ No 'text' field found in payload")
-
-
-    # --------------------------------------------------
-    # Build context
-    # --------------------------------------------------
 
     context = "\n\n".join(context_parts)
 
-    print("----------------------------------------")
-    print("📚 Context length:", len(context))
-    print("📚 Number of context documents:", len(context_parts))
 
+    print(
+        f"STEP 6 COMPLETE: Context length = "
+        f"{len(context)} characters"
+    )
+
+
+    # ----------------------------------------------
+    # CHECK CONTEXT
+    # ----------------------------------------------
 
     if not context:
 
-        print("⚠️ No context retrieved from Qdrant")
+        print("WARNING: Qdrant returned no text context")
 
         return (
             "I don't have enough information "
@@ -167,9 +199,9 @@ def rag_answer(question: str, top_k: int = 3):
         )
 
 
-    # --------------------------------------------------
-    # RAG prompt
-    # --------------------------------------------------
+    # ----------------------------------------------
+    # RAG PROMPT
+    # ----------------------------------------------
 
     prompt = f"""
 You are a Samsung Washing Machine Technical Support Assistant.
@@ -193,46 +225,61 @@ ANSWER:
 """
 
 
-    # --------------------------------------------------
-    # Generate answer using Groq
-    # --------------------------------------------------
+    # ----------------------------------------------
+    # GROQ REQUEST
+    # ----------------------------------------------
 
-    print("🤖 Sending request to Groq...")
+    print("STEP 7: Sending request to Groq")
 
-    response = groq_client.chat.completions.create(
-        model="openai/gpt-oss-20b",
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a helpful Samsung washing machine "
-                    "technical support assistant. "
-                    "Use only the provided manual context."
-                )
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
-        temperature=0.2
+    start_time = time.time()
+
+    try:
+
+        response = groq_client.chat.completions.create(
+            model="openai/gpt-oss-20b",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a helpful Samsung washing "
+                        "machine technical support assistant. "
+                        "Use only the provided manual context."
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=0.2
+        )
+
+    except Exception as e:
+
+        print(f"ERROR in Groq: {repr(e)}")
+
+        return "Unable to generate an answer from the AI model."
+
+
+    print(
+        f"STEP 7 COMPLETE: Groq response received in "
+        f"{time.time() - start_time:.2f} seconds"
     )
 
-    print("✅ Groq response received")
 
-
-    # --------------------------------------------------
-    # Extract answer
-    # --------------------------------------------------
+    # ----------------------------------------------
+    # FINAL ANSWER
+    # ----------------------------------------------
 
     answer = response.choices[0].message.content
 
-    print("📝 Final answer:")
-    print(answer)
+    print("STEP 8: Answer generated")
 
-    print("========================================")
-    print("✅ RAG request completed")
-    print("========================================")
+    print(f"Answer: {answer}")
+
+    print("==========================================")
+    print("RAG REQUEST COMPLETE")
+    print("==========================================")
 
 
     return answer
