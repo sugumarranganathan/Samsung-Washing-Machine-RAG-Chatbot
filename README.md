@@ -10,7 +10,7 @@
 
 ---
 
-## 📌 Overview
+##  Overview
 
 **Samsung Washing Machine Technical Support AI** is an AI-powered, Retrieval-Augmented Generation (RAG) chatbot that answers washing-machine technical questions using information retrieved from the provided technical documentation.
 
