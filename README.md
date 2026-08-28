@@ -173,6 +173,73 @@ Final Answer
 
 This helps the chatbot answer questions using the available washing machine documentation.
 
+---
+🚀 DevOps, MLOps & CI/CD Implementation
+Technologies and Practices Used in the Project
+
+This project integrates DevOps practices, CI/CD automation, MLOps components, cloud deployment, and serverless architecture to build and deploy the RAG-based AI technical support chatbot.
+
+| Area                            | Technologies / Practices Used                               | Status     |
+| ------------------------------- | ----------------------------------------------------------- | ---------- |
+| **DevOps**                      | GitHub, GitHub Actions, Docker, AWS, OIDC                   | ✅ Used     |
+| **Continuous Integration (CI)** | Dependency installation, Python `py_compile` checks         | ✅ Used     |
+| **Continuous Deployment (CD)**  | Docker → Amazon ECR → AWS Lambda automatic deployment       | ✅ Used     |
+| **Continuous Testing (CT)**     | Automated Python validation                                 | 🟡 Basic   |
+| **MLOps**                       | RAG, embeddings, Qdrant, Groq, Docker, automated deployment | 🟡 Partial |
+| **Cloud Deployment**            | AWS Lambda, API Gateway, Amazon ECR                         | ✅ Used     |
+| **Serverless Architecture**     | AWS Lambda, API Gateway                                     | ✅ Used     |
+| **Frontend Deployment**         | GitHub Pages                                                | ✅ Used     |
+
+-----
+
+🔄 CI/CD Pipeline
+Developer
+    ↓
+GitHub Repository
+    ↓
+GitHub Actions
+    ↓
+Continuous Integration (CI)
+    ↓
+Python Validation
+    ↓
+Docker Build
+    ↓
+Amazon ECR
+    ↓
+Continuous Deployment (CD)
+    ↓
+AWS Lambda
+    ↓
+API Gateway
+    ↓
+Customer
+🧠 AI / MLOps Pipeline
+Technical Manual
+       ↓
+Document Processing
+       ↓
+Embeddings
+       ↓
+Qdrant Vector Database
+       ↓
+RAG Retrieval
+       ↓
+Groq LLM
+       ↓
+Technical Support Answer
+📌 Project Classification
+
+DevOps: ✅ Implemented
+CI: ✅ Implemented
+CD: ✅ Implemented
+CT: 🟡 Basic implementation
+MLOps: 🟡 Partial implementation
+AWS Cloud Deployment: ✅ Implemented
+Serverless: ✅ Implemented
+
+-----
+
 📚 Supported Technical Topics
 
 The chatbot can provide information related to topics such as:
