@@ -21,7 +21,6 @@
 
     <title>Samsung Washing Machine AI Support</title>
 
-
     <style>
 
         /* =========================================================
@@ -59,7 +58,6 @@
 
             --transition:
                 220ms cubic-bezier(.2,.8,.2,1);
-
         }
 
 
@@ -97,6 +95,7 @@
             color: var(--text);
 
             background:
+
                 radial-gradient(
                     circle at 15% 15%,
                     rgba(78, 116, 255, 0.20),
@@ -143,7 +142,6 @@
         .background {
 
             position: fixed;
-
             inset: 0;
 
             overflow: hidden;
@@ -210,12 +208,14 @@
 
             0%,
             100% {
+
                 transform:
                     translate3d(0, 0, 0)
                     scale(1);
             }
 
             50% {
+
                 transform:
                     translate3d(30px, -25px, 0)
                     scale(1.08);
@@ -430,7 +430,8 @@
 
         .brand-text h1 {
 
-            font-size: clamp(17px, 3vw, 23px);
+            font-size:
+                clamp(17px, 3vw, 23px);
 
             font-weight: 800;
 
@@ -678,6 +679,7 @@
 
                 transform:
                     translateY(12px);
+
             }
 
             to {
@@ -686,6 +688,7 @@
 
                 transform:
                     translateY(0);
+
             }
         }
 
@@ -969,6 +972,108 @@
         }
 
 
+        /* =========================================================
+           COPY ACTION
+        ========================================================= */
+
+        .message-actions {
+
+            display: flex;
+
+            align-items: center;
+
+            gap: 7px;
+
+            margin-top: 10px;
+
+            padding-top: 1px;
+        }
+
+
+        .message-action {
+
+            display: inline-flex;
+
+            align-items: center;
+
+            justify-content: center;
+
+            gap: 5px;
+
+            padding:
+                6px 10px;
+
+            border:
+                1px solid
+                rgba(20,40,160,.12);
+
+            border-radius:
+                8px;
+
+            background:
+                rgba(255,255,255,.78);
+
+            color:
+                #68738a;
+
+            font-size:
+                11px;
+
+            line-height: 1;
+
+            cursor:
+                pointer;
+
+            transition:
+                all 180ms ease;
+        }
+
+
+        .message-action:hover {
+
+            color:
+                var(--primary);
+
+            background:
+                #ffffff;
+
+            border-color:
+                rgba(20,40,160,.22);
+
+            transform:
+                translateY(-1px);
+
+            box-shadow:
+                0 4px 12px
+                rgba(20,40,160,.08);
+        }
+
+
+        .message-action:active {
+
+            transform:
+                translateY(0)
+                scale(.97);
+        }
+
+
+        .message-action.copied {
+
+            color:
+                var(--success);
+
+            border-color:
+                rgba(25,169,116,.25);
+
+            background:
+                rgba(25,169,116,.06);
+        }
+
+
+        /* =========================================================
+           MESSAGE META
+        ========================================================= */
+
         .message-meta {
 
             display: flex;
@@ -1170,6 +1275,7 @@
                 white;
 
             background:
+
                 linear-gradient(
                     135deg,
                     #1428a0,
@@ -1204,6 +1310,7 @@
             inset: 0;
 
             background:
+
                 linear-gradient(
                     110deg,
                     transparent 25%,
@@ -1311,7 +1418,7 @@
 
 
         /* =========================================================
-           FOCUS ACCESSIBILITY
+           ACCESSIBILITY
         ========================================================= */
 
         button:focus-visible,
@@ -1336,6 +1443,7 @@
                 overflow: hidden;
             }
 
+
             .app {
 
                 width: 100%;
@@ -1349,11 +1457,13 @@
                 border: 0;
             }
 
+
             .header {
 
                 padding:
                     17px 16px;
             }
+
 
             .brand-icon {
 
@@ -1365,6 +1475,7 @@
                 font-size: 21px;
             }
 
+
             .status {
 
                 padding:
@@ -1373,11 +1484,13 @@
                 font-size: 9px;
             }
 
+
             .chat-box {
 
                 padding:
                     16px 13px 10px;
             }
+
 
             .message-content {
 
@@ -1388,6 +1501,7 @@
                     13px;
             }
 
+
             .welcome {
 
                 padding:
@@ -1396,6 +1510,7 @@
                 margin-bottom:
                     17px;
             }
+
 
             .quick-question {
 
@@ -1406,11 +1521,13 @@
                     7px 10px;
             }
 
+
             .input-section {
 
                 padding:
                     10px;
             }
+
 
             .send-button {
 
@@ -1426,17 +1543,21 @@
                 display: none;
             }
 
+
             .brand-text h1 {
                 font-size: 16px;
             }
+
 
             .status {
                 display: none;
             }
 
+
             .message-content {
                 max-width: 92%;
             }
+
 
             .toolbar-label {
                 font-size: 10px;
@@ -1453,6 +1574,7 @@
             html {
                 scroll-behavior: auto;
             }
+
 
             *,
             *::before,
@@ -1471,6 +1593,7 @@
                     auto !important;
             }
 
+
             .orb {
                 display: none;
             }
@@ -1478,7 +1601,7 @@
 
 
         /* =========================================================
-           FALLBACK IF BACKDROP FILTER IS NOT SUPPORTED
+           FALLBACK
         ========================================================= */
 
         @supports not (
@@ -1490,6 +1613,7 @@
                 background:
                     rgba(255,255,255,.97);
             }
+
 
             .toolbar,
             .input-section {
@@ -1552,6 +1676,7 @@
                     🫧
                 </div>
 
+
                 <div class="brand-text">
 
                     <h1>
@@ -1598,6 +1723,7 @@
             AI Technical Support
         </span>
 
+
         <button
             class="clear-button"
             id="clear-button"
@@ -1639,9 +1765,11 @@
                 👋
             </div>
 
+
             <h2>
                 Hello! How can I help?
             </h2>
+
 
             <p>
                 Ask me about washing-machine operation,
@@ -1663,6 +1791,7 @@
                     ▶️ Start a wash cycle
                 </button>
 
+
                 <button
                     class="quick-question"
                     type="button"
@@ -1670,6 +1799,7 @@
                 >
                     💧 Error 4C
                 </button>
+
 
                 <button
                     class="quick-question"
@@ -1679,6 +1809,7 @@
                     🚿 Error 5C
                 </button>
 
+
                 <button
                     class="quick-question"
                     type="button"
@@ -1686,6 +1817,7 @@
                 >
                     📳 Vibration
                 </button>
+
 
                 <button
                     class="quick-question"
@@ -1698,7 +1830,6 @@
             </div>
 
         </div>
-
 
     </section>
 
@@ -1742,6 +1873,7 @@
             <span class="hint">
                 Press Enter to send
             </span>
+
 
             <span id="char-count">
                 0 / 500
@@ -1790,7 +1922,7 @@
 
     /* =========================================================
        HTML ESCAPING
-       Prevents API content from becoming executable HTML.
+       Keeps API content safe.
     ========================================================= */
 
     function escapeHtml(text) {
@@ -1900,6 +2032,107 @@
         );
 
 
+        /* =====================================================
+           COPY BUTTON FOR AI ANSWERS
+        ===================================================== */
+
+        if (type === "bot") {
+
+            const actionsDiv =
+                document.createElement("div");
+
+            actionsDiv.className =
+                "message-actions";
+
+
+            const copyButton =
+                document.createElement("button");
+
+            copyButton.type =
+                "button";
+
+            copyButton.className =
+                "message-action";
+
+            copyButton.setAttribute(
+                "aria-label",
+                "Copy AI answer"
+            );
+
+            copyButton.innerHTML =
+                "📋 Copy";
+
+
+            copyButton.addEventListener(
+                "click",
+                async () => {
+
+                    try {
+
+                        await copyText(message);
+
+
+                        copyButton.innerHTML =
+                            "✓ Copied";
+
+                        copyButton.classList.add(
+                            "copied"
+                        );
+
+
+                        setTimeout(() => {
+
+                            copyButton.innerHTML =
+                                "📋 Copy";
+
+                            copyButton.classList.remove(
+                                "copied"
+                            );
+
+                        }, 1800);
+
+
+                    } catch (error) {
+
+                        console.error(
+                            "Copy failed:",
+                            error
+                        );
+
+                        copyButton.innerHTML =
+                            "Copy failed";
+
+
+                        setTimeout(() => {
+
+                            copyButton.innerHTML =
+                                "📋 Copy";
+
+                        }, 1800);
+
+                    }
+
+                }
+            );
+
+
+            actionsDiv.appendChild(
+                copyButton
+            );
+
+
+            /*
+             * IMPORTANT:
+             * The button is outside the visible
+             * answer text flow.
+             */
+
+            contentDiv.appendChild(
+                actionsDiv
+            );
+        }
+
+
         chatBox.appendChild(
             messageDiv
         );
@@ -1909,6 +2142,73 @@
 
 
         return messageDiv;
+    }
+
+
+    /* =========================================================
+       COPY TEXT
+       Uses modern clipboard API first,
+       then fallback method.
+    ========================================================= */
+
+    async function copyText(text) {
+
+        if (
+            navigator.clipboard &&
+            window.isSecureContext
+        ) {
+
+            await navigator.clipboard.writeText(
+                text
+            );
+
+            return;
+        }
+
+
+        /* Fallback for environments where
+           Clipboard API is unavailable */
+
+        const textarea =
+            document.createElement("textarea");
+
+
+        textarea.value =
+            text;
+
+
+        textarea.style.position =
+            "fixed";
+
+        textarea.style.opacity =
+            "0";
+
+
+        document.body.appendChild(
+            textarea
+        );
+
+
+        textarea.focus();
+
+        textarea.select();
+
+
+        const successful =
+            document.execCommand(
+                "copy"
+            );
+
+
+        textarea.remove();
+
+
+        if (!successful) {
+
+            throw new Error(
+                "Clipboard copy failed"
+            );
+        }
     }
 
 
@@ -1977,25 +2277,6 @@
 
 
     /* =========================================================
-       REMOVE TYPING
-    ========================================================= */
-
-    function removeTypingMessage() {
-
-        const typingMessage =
-            chatBox.querySelector(
-                '[data-typing="true"]'
-            );
-
-
-        if (typingMessage) {
-
-            typingMessage.remove();
-        }
-    }
-
-
-    /* =========================================================
        SCROLL
     ========================================================= */
 
@@ -2034,7 +2315,7 @@
         }
 
 
-        /* Hide welcome screen */
+        /* Hide welcome */
 
         if (welcome) {
 
@@ -2059,20 +2340,19 @@
         updateCharacterCount();
 
 
-        /* Disable button */
+        /* Disable send */
 
         sendButton.disabled =
             true;
 
 
-        /* Typing indicator */
+        /* Show typing */
 
         const typingMessage =
             addTypingMessage();
 
 
         try {
-
 
             const response =
                 await fetch(
@@ -2090,8 +2370,10 @@
 
                         body:
                             JSON.stringify({
+
                                 query:
                                     question
+
                             })
 
                     }
@@ -2118,14 +2400,14 @@
             }
 
 
-            /* API answer */
+            /* Get answer */
 
             const answer =
                 data.answer ||
                 "I don't have enough information in the provided manual.";
 
 
-            /* Add answer */
+            /* Add AI answer */
 
             addMessage(
                 answer,
@@ -2160,7 +2442,6 @@
 
 
         questionInput.focus();
-
     }
 
 
@@ -2221,7 +2502,6 @@
 
 
         questionInput.focus();
-
     }
 
 
@@ -2309,8 +2589,11 @@
 
 
     /* =========================================================
-       INITIAL FOCUS
+       INITIALIZATION
     ========================================================= */
+
+    updateCharacterCount();
+
 
     window.addEventListener(
         "load",
