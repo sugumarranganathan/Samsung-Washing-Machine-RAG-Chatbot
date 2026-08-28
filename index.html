@@ -1070,6 +1070,91 @@
         }
 
 
+
+        .history-status {
+            margin-left: auto;
+            margin-right: 14px;
+            font-size: 10px;
+            color: #667085;
+            opacity: .9;
+            white-space: nowrap;
+        }
+
+        @media (max-width: 620px) {
+            .history-status {
+                display: none;
+            }
+        }
+
+        /* =========================================================
+           RETRY / ERROR HANDLING
+        ========================================================= */
+
+        .error-message .message-content {
+            border-color: rgba(239, 83, 80, 0.22);
+        }
+
+        .error-title {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            color: #c62828;
+            font-weight: 750;
+            margin-bottom: 6px;
+        }
+
+        .error-text {
+            color: #4b5568;
+        }
+
+        .retry-button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            margin-top: 11px;
+            padding: 7px 11px;
+            border: 1px solid rgba(20,40,160,.16);
+            border-radius: 9px;
+            background: #fff;
+            color: var(--primary);
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 180ms ease;
+        }
+
+        .retry-button:hover {
+            background: #f1f4ff;
+            border-color: rgba(20,40,160,.28);
+            transform: translateY(-1px);
+            box-shadow: 0 5px 14px rgba(20,40,160,.10);
+        }
+
+        .retry-button:active {
+            transform: translateY(0) scale(.97);
+        }
+
+        .retry-button:disabled {
+            opacity: .55;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .retry-spinner {
+            width: 12px;
+            height: 12px;
+            border: 2px solid rgba(20,40,160,.18);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: retrySpin .7s linear infinite;
+        }
+
+        @keyframes retrySpin {
+            to { transform: rotate(360deg); }
+        }
+
         /* =========================================================
            MESSAGE META
         ========================================================= */
@@ -1723,6 +1808,14 @@
             AI Technical Support
         </span>
 
+        <span
+            class="history-status"
+            id="history-status"
+            title="Conversation history is saved in this browser"
+        >
+            💾 History saved locally
+        </span>
+
 
         <button
             class="clear-button"
@@ -1896,6 +1989,16 @@
     const API_URL =
         "https://uji26268tj.execute-api.us-east-1.amazonaws.com/chat";
 
+    /* =========================================================
+       CONVERSATION HISTORY
+       Stored only in this browser/device.
+    ========================================================= */
+
+    const HISTORY_KEY =
+        "samsung_washing_machine_chat_history_v1";
+
+    const MAX_HISTORY_MESSAGES = 50;
+
 
     /* =========================================================
        DOM ELEMENTS
@@ -1997,7 +2100,7 @@
        ADD MESSAGE
     ========================================================= */
 
-    function addMessage(message, type) {
+    function addMessage(message, type, saveToHistory = true) {
 
         const messageDiv =
             document.createElement("div");
@@ -2137,6 +2240,9 @@
             messageDiv
         );
 
+        if (saveToHistory) {
+            saveHistoryMessage(message, type);
+        }
 
         scrollToBottom();
 
@@ -2292,65 +2398,301 @@
 
 
     /* =========================================================
-       SEND MESSAGE
+       CONVERSATION HISTORY
     ========================================================= */
 
-    async function sendMessage() {
+    function readHistory() {
 
-        const question =
-            questionInput.value.trim();
+        try {
+
+            const raw =
+                localStorage.getItem(HISTORY_KEY);
+
+            if (!raw) {
+                return [];
+            }
+
+            const history =
+                JSON.parse(raw);
+
+            if (!Array.isArray(history)) {
+                return [];
+            }
+
+            return history.filter(item =>
+                item &&
+                (item.type === "user" || item.type === "bot") &&
+                typeof item.message === "string"
+            );
+
+        } catch (error) {
+
+            console.error(
+                "Could not read conversation history:",
+                error
+            );
+
+            return [];
+        }
+    }
 
 
-        if (!question) {
+    function saveHistoryMessage(message, type) {
 
-            questionInput.focus();
+        try {
 
+            const history = readHistory();
+
+            history.push({
+                message: String(message),
+                type: type,
+                timestamp: new Date().toISOString()
+            });
+
+            const trimmedHistory =
+                history.slice(-MAX_HISTORY_MESSAGES);
+
+            localStorage.setItem(
+                HISTORY_KEY,
+                JSON.stringify(trimmedHistory)
+            );
+
+        } catch (error) {
+
+            /*
+             * Private/incognito mode or browser storage limits
+             * should never break the chatbot itself.
+             */
+            console.warn(
+                "Conversation history could not be saved:",
+                error
+            );
+        }
+    }
+
+
+    function loadConversationHistory() {
+
+        const history = readHistory();
+
+        if (!history.length) {
+            welcome.style.display = "";
             return;
         }
 
+        welcome.style.display = "none";
 
-        if (sendButton.disabled) {
+        history.forEach(item => {
 
-            return;
+            addMessage(
+                item.message,
+                item.type,
+                false
+            );
+
+        });
+
+        scrollToBottom();
+    }
+
+
+    function clearConversationHistory() {
+
+        try {
+
+            localStorage.removeItem(HISTORY_KEY);
+
+        } catch (error) {
+
+            console.warn(
+                "Could not clear conversation history:",
+                error
+            );
+        }
+    }
+
+
+    /* =========================================================
+       ERROR MESSAGE + RETRY
+    ========================================================= */
+
+    function addErrorMessage(question, errorType = "connection") {
+
+        const messageDiv = document.createElement("div");
+
+        messageDiv.className =
+            "message bot error-message";
+
+        const contentDiv = document.createElement("div");
+
+        contentDiv.className =
+            "message-content";
+
+        let title = "Unable to connect";
+        let text =
+            "The AI service could not be reached. Please try again.";
+
+        if (errorType === "timeout") {
+            title = "Request timed out";
+            text =
+                "The AI service is taking too long to respond. Please try again.";
+        } else if (errorType === "server") {
+            title = "AI service error";
+            text =
+                "The AI service returned an error. Please try again in a moment.";
+        } else if (errorType === "invalid") {
+            title = "Unexpected response";
+            text =
+                "The AI service returned an unexpected response. Please try again.";
+        } else if (errorType === "network") {
+            title = "Network error";
+            text =
+                "Please check your internet connection and try again.";
         }
 
+        contentDiv.innerHTML = `
+            <div class="error-title">⚠️ ${title}</div>
+            <div class="error-text">${escapeHtml(text)}</div>
+        `;
 
-        /* Hide welcome */
+        const retryButton = document.createElement("button");
 
-        if (welcome) {
-
-            welcome.style.display =
-                "none";
-        }
-
-
-        /* Add user message */
-
-        addMessage(
-            question,
-            "user"
+        retryButton.type = "button";
+        retryButton.className = "retry-button";
+        retryButton.innerHTML = "🔄 Retry";
+        retryButton.setAttribute(
+            "aria-label",
+            "Retry the last question"
         );
 
+        retryButton.addEventListener("click", async () => {
 
-        /* Clear input */
+            if (retryButton.disabled) {
+                return;
+            }
 
-        questionInput.value =
-            "";
+            retryButton.disabled = true;
 
-        updateCharacterCount();
+            retryButton.innerHTML = `
+                <span class="retry-spinner"></span>
+                Retrying...
+            `;
+
+            await sendQuestion(question, {
+                isRetry: true,
+                errorMessage: messageDiv
+            });
+
+        });
+
+        contentDiv.appendChild(retryButton);
+        messageDiv.appendChild(contentDiv);
+
+        chatBox.appendChild(messageDiv);
+
+        scrollToBottom();
+
+        return messageDiv;
+    }
 
 
-        /* Disable send */
+    /* =========================================================
+       API ERROR CLASSIFICATION
+    ========================================================= */
 
-        sendButton.disabled =
-            true;
+    function classifyApiError(error) {
+
+        if (error && error.name === "AbortError") {
+            return "timeout";
+        }
+
+        if (
+            error &&
+            error.message &&
+            error.message.toLowerCase().includes("invalid")
+        ) {
+            return "invalid";
+        }
+
+        if (
+            error &&
+            error.message &&
+            error.message.toLowerCase().includes("http")
+        ) {
+            return "server";
+        }
+
+        if (
+            error &&
+            error.message &&
+            (
+                error.message.toLowerCase().includes("network") ||
+                error.message.toLowerCase().includes("failed to fetch")
+            )
+        ) {
+            return "network";
+        }
+
+        return "connection";
+    }
 
 
-        /* Show typing */
+    /* =========================================================
+       SEND QUESTION
+       Handles normal requests and retry requests.
+    ========================================================= */
+
+    async function sendQuestion(question, options = {}) {
+
+        const isRetry =
+            options.isRetry === true;
+
+        const errorMessage =
+            options.errorMessage || null;
+
+        if (!question) {
+            return;
+        }
+
+        if (welcome) {
+            welcome.style.display = "none";
+        }
+
+        /*
+         * Normal request:
+         * add the customer's message.
+         *
+         * Retry:
+         * reuse the previous question so it is not duplicated.
+         */
+        if (!isRetry) {
+
+            addMessage(
+                question,
+                "user"
+            );
+
+            questionInput.value = "";
+            updateCharacterCount();
+
+        }
+
+        sendButton.disabled = true;
 
         const typingMessage =
             addTypingMessage();
 
+        /*
+         * Prevent the interface from waiting forever.
+         * The request is cancelled after 30 seconds.
+         */
+        const controller =
+            new AbortController();
+
+        const timeoutId =
+            setTimeout(() => {
+                controller.abort();
+            }, 30000);
 
         try {
 
@@ -2358,27 +2700,24 @@
                 await fetch(
                     API_URL,
                     {
-
                         method: "POST",
 
                         headers: {
-
                             "Content-Type":
                                 "application/json"
-
                         },
 
                         body:
                             JSON.stringify({
+                                query: question
+                            }),
 
-                                query:
-                                    question
-
-                            })
-
+                        signal:
+                            controller.signal
                     }
                 );
 
+            clearTimeout(timeoutId);
 
             if (!response.ok) {
 
@@ -2387,61 +2726,188 @@
                 );
             }
 
+            let data;
 
-            const data =
-                await response.json();
+            try {
 
+                data =
+                    await response.json();
 
-            /* Remove typing */
+            } catch (jsonError) {
+
+                const error =
+                    new Error(
+                        "Invalid JSON response"
+                    );
+
+                error.name =
+                    "InvalidResponseError";
+
+                throw error;
+            }
+
+            if (
+                !data ||
+                typeof data.answer !== "string"
+            ) {
+
+                const error =
+                    new Error(
+                        "Invalid API response"
+                    );
+
+                error.name =
+                    "InvalidResponseError";
+
+                throw error;
+            }
 
             if (typingMessage) {
-
                 typingMessage.remove();
             }
 
-
-            /* Get answer */
+            /*
+             * Retry succeeded.
+             * Remove the old error card.
+             */
+            if (isRetry && errorMessage) {
+                errorMessage.remove();
+            }
 
             const answer =
-                data.answer ||
+                data.answer.trim() ||
                 "I don't have enough information in the provided manual.";
-
-
-            /* Add AI answer */
 
             addMessage(
                 answer,
                 "bot"
             );
 
-
         } catch (error) {
+
+            clearTimeout(timeoutId);
 
             console.error(
                 "API Error:",
                 error
             );
 
-
             if (typingMessage) {
-
                 typingMessage.remove();
             }
 
+            const errorType =
+                classifyApiError(error);
 
-            addMessage(
-                "Sorry, I could not connect to the AI service. Please try again.",
-                "bot"
-            );
+            /*
+             * If this was a retry and it failed again,
+             * update the same error card instead of creating
+             * another error message.
+             */
+            if (isRetry && errorMessage) {
 
+                const retryButton =
+                    errorMessage.querySelector(
+                        ".retry-button"
+                    );
+
+                const errorText =
+                    errorMessage.querySelector(
+                        ".error-text"
+                    );
+
+                if (errorType === "timeout") {
+
+                    errorMessage.querySelector(
+                        ".error-title"
+                    ).innerHTML =
+                        "⚠️ Request timed out";
+
+                    if (errorText) {
+                        errorText.textContent =
+                            "The AI service is taking too long to respond. Please try again.";
+                    }
+
+                } else if (errorType === "server") {
+
+                    errorMessage.querySelector(
+                        ".error-title"
+                    ).innerHTML =
+                        "⚠️ AI service error";
+
+                    if (errorText) {
+                        errorText.textContent =
+                            "The AI service returned an error. Please try again in a moment.";
+                    }
+
+                } else if (errorType === "network") {
+
+                    errorMessage.querySelector(
+                        ".error-title"
+                    ).innerHTML =
+                        "⚠️ Network error";
+
+                    if (errorText) {
+                        errorText.textContent =
+                            "Please check your internet connection and try again.";
+                    }
+
+                } else if (errorType === "invalid") {
+
+                    errorMessage.querySelector(
+                        ".error-title"
+                    ).innerHTML =
+                        "⚠️ Unexpected response";
+
+                    if (errorText) {
+                        errorText.textContent =
+                            "The AI service returned an unexpected response. Please try again.";
+                    }
+
+                }
+
+                if (retryButton) {
+                    retryButton.disabled = false;
+                    retryButton.innerHTML = "🔄 Retry";
+                }
+
+            } else {
+
+                addErrorMessage(
+                    question,
+                    errorType
+                );
+            }
+
+        } finally {
+
+            sendButton.disabled = false;
+            questionInput.focus();
+        }
+    }
+
+
+    /* =========================================================
+       SEND MESSAGE
+    ========================================================= */
+
+    async function sendMessage() {
+
+        const question =
+            questionInput.value.trim();
+
+        if (!question) {
+
+            questionInput.focus();
+
+            return;
         }
 
+        if (sendButton.disabled) {
+            return;
+        }
 
-        sendButton.disabled =
-            false;
-
-
-        questionInput.focus();
+        await sendQuestion(question);
     }
 
 
@@ -2488,6 +2954,8 @@
             message =>
                 message.remove()
         );
+
+        clearConversationHistory();
 
 
         welcome.style.display =
@@ -2593,6 +3061,7 @@
     ========================================================= */
 
     updateCharacterCount();
+    loadConversationHistory();
 
 
     window.addEventListener(
