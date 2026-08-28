@@ -1,94 +1,82 @@
 import os
-import time
 import re
-
-from sentence_transformers import SentenceTransformer
-from qdrant_client import QdrantClient
-from groq import Groq
+import time
 
 
-# =========================================================
+# ============================================================
 # ENVIRONMENT VARIABLES
-# =========================================================
+# ============================================================
 
 QDRANT_URL = os.environ["QDRANT_URL"]
 QDRANT_API_KEY = os.environ["QDRANT_API_KEY"]
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 
 
-# =========================================================
+# ============================================================
 # CONFIGURATION
-# =========================================================
+# ============================================================
 
 MODEL_PATH = "/opt/models/all-MiniLM-L6-v2"
 
 COLLECTION_NAME = "samsung_washing_machine"
 
-# Number of chunks retrieved from Qdrant
 TOP_K = 3
 
-# Minimum similarity score
 SCORE_THRESHOLD = 0.45
 
-# Groq model
 GROQ_MODEL = "openai/gpt-oss-20b"
 
-# Timeouts
-QDRANT_TIMEOUT = 10
-GROQ_TIMEOUT = 20
+QDRANT_TIMEOUT = 8
 
-# Retry configuration
+GROQ_TIMEOUT = 15
+
 MAX_RETRIES = 2
 
-# Maximum question size
 MAX_QUESTION_LENGTH = 1000
 
 
-# =========================================================
-# GLOBAL CLIENTS / MODEL
-# =========================================================
+# ============================================================
+# LAZY-LOADED OBJECTS
+# ============================================================
 #
 # IMPORTANT:
-# Do NOT load SentenceTransformer during Lambda initialization.
 #
-# The old code did:
+# Do NOT import SentenceTransformer, QdrantClient or Groq
+# at the top of this file.
 #
-# embedding_model = SentenceTransformer(MODEL_PATH)
+# Lambda should start without loading heavy ML libraries.
 #
-# That caused Lambda INIT timeout.
-#
-# We now load the model only when the first request arrives.
-# =========================================================
+# The objects are created only when the first request needs
+# them.
+# ============================================================
 
 embedding_model = None
 qdrant_client = None
 groq_client = None
 
 
-# =========================================================
-# RETRY HELPER
-# =========================================================
+# ============================================================
+# RETRY DELAY
+# ============================================================
 
 def retry_delay(attempt: int) -> float:
     """
-    Exponential backoff delay.
-
-    attempt 0 -> 1 second
-    attempt 1 -> 2 seconds
+    Small exponential backoff.
     """
-    return min(2 ** attempt, 4)
+
+    return min(2 ** attempt, 2)
 
 
-# =========================================================
-# LOAD EMBEDDING MODEL LAZILY
-# =========================================================
+# ============================================================
+# LOAD EMBEDDING MODEL
+# ============================================================
 
 def get_embedding_model():
     """
-    Load the SentenceTransformer model only when required.
+    Lazy-load SentenceTransformer.
 
-    This prevents the model from being loaded during
-    Lambda cold-start initialization.
+    This prevents the heavy ML library and model from
+    being loaded during Lambda initialization.
     """
 
     global embedding_model
@@ -97,71 +85,68 @@ def get_embedding_model():
         return embedding_model
 
     print("==========================================")
-    print("LOADING EMBEDDING MODEL")
+    print("LAZY LOADING EMBEDDING MODEL")
     print("==========================================")
 
     start_time = time.time()
 
-    last_error = None
+    try:
 
-    for attempt in range(MAX_RETRIES):
+        # IMPORTANT:
+        # Import only when the model is actually needed.
+        from sentence_transformers import SentenceTransformer
 
-        try:
+        print(
+            "SentenceTransformer library imported"
+        )
 
-            print(
-                f"Embedding model load attempt "
-                f"{attempt + 1}/{MAX_RETRIES}"
-            )
-
-            embedding_model = SentenceTransformer(
-                MODEL_PATH
-            )
-
-            elapsed = time.time() - start_time
+        if not os.path.exists(MODEL_PATH):
 
             print(
-                f"EMBEDDING MODEL LOADED "
-                f"in {elapsed:.2f} seconds"
+                f"ERROR: Model path does not exist: "
+                f"{MODEL_PATH}"
             )
 
-            return embedding_model
-
-        except Exception as e:
-
-            last_error = e
-
-            print(
-                f"ERROR loading embedding model: "
-                f"{repr(e)}"
+            raise FileNotFoundError(
+                f"Embedding model not found at {MODEL_PATH}"
             )
 
-            if attempt < MAX_RETRIES - 1:
+        print(
+            f"Loading model from: {MODEL_PATH}"
+        )
 
-                delay = retry_delay(attempt)
+        embedding_model = SentenceTransformer(
+            MODEL_PATH
+        )
 
-                print(
-                    f"Retrying model load in "
-                    f"{delay} seconds..."
-                )
+        elapsed = time.time() - start_time
 
-                time.sleep(delay)
+        print(
+            f"Embedding model loaded successfully "
+            f"in {elapsed:.2f} seconds"
+        )
 
-    print(
-        "FATAL: Unable to load embedding model"
-    )
+        return embedding_model
 
-    raise RuntimeError(
-        "Unable to load embedding model"
-    ) from last_error
+    except Exception as e:
+
+        print(
+            f"ERROR loading embedding model: "
+            f"{repr(e)}"
+        )
+
+        raise RuntimeError(
+            "Embedding model could not be loaded"
+        ) from e
 
 
-# =========================================================
-# CREATE QDRANT CLIENT LAZILY
-# =========================================================
+# ============================================================
+# CREATE QDRANT CLIENT
+# ============================================================
 
 def get_qdrant_client():
     """
-    Create Qdrant client only when required.
+    Lazy-create Qdrant client.
     """
 
     global qdrant_client
@@ -169,9 +154,14 @@ def get_qdrant_client():
     if qdrant_client is not None:
         return qdrant_client
 
-    print("Creating Qdrant client...")
+    print(
+        "Creating Qdrant client..."
+    )
 
     try:
+
+        # Lazy import
+        from qdrant_client import QdrantClient
 
         qdrant_client = QdrantClient(
             url=QDRANT_URL,
@@ -193,17 +183,17 @@ def get_qdrant_client():
         )
 
         raise RuntimeError(
-            "Unable to create knowledge-base client"
+            "Knowledge base connection could not be created"
         ) from e
 
 
-# =========================================================
-# CREATE GROQ CLIENT LAZILY
-# =========================================================
+# ============================================================
+# CREATE GROQ CLIENT
+# ============================================================
 
 def get_groq_client():
     """
-    Create Groq client only when required.
+    Lazy-create Groq client.
     """
 
     global groq_client
@@ -211,9 +201,14 @@ def get_groq_client():
     if groq_client is not None:
         return groq_client
 
-    print("Creating Groq client...")
+    print(
+        "Creating Groq client..."
+    )
 
     try:
+
+        # Lazy import
+        from groq import Groq
 
         groq_client = Groq(
             api_key=GROQ_API_KEY,
@@ -235,18 +230,17 @@ def get_groq_client():
         )
 
         raise RuntimeError(
-            "Unable to create AI service client"
+            "AI service connection could not be created"
         ) from e
 
 
-# =========================================================
-# TEXT CLEANING
-# =========================================================
+# ============================================================
+# CLEAN TEXT
+# ============================================================
 
 def clean_text(text: str) -> str:
     """
-    Remove unwanted control characters while
-    preserving normal whitespace.
+    Remove unwanted control characters.
     """
 
     if not text:
@@ -261,13 +255,13 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 
-# =========================================================
+# ============================================================
 # VALIDATE QUESTION
-# =========================================================
+# ============================================================
 
 def validate_question(question):
     """
-    Validate and normalize user question.
+    Validate customer question.
     """
 
     if not isinstance(question, str):
@@ -286,7 +280,7 @@ def validate_question(question):
     if not question:
 
         print(
-            "WARNING: Empty question received"
+            "WARNING: Empty question"
         )
 
         return (
@@ -297,7 +291,7 @@ def validate_question(question):
     if len(question) > MAX_QUESTION_LENGTH:
 
         print(
-            f"WARNING: Question exceeded "
+            f"WARNING: Question exceeds "
             f"{MAX_QUESTION_LENGTH} characters"
         )
 
@@ -310,16 +304,18 @@ def validate_question(question):
     return question, None
 
 
-# =========================================================
-# CREATE QUERY EMBEDDING WITH RETRY
-# =========================================================
+# ============================================================
+# CREATE EMBEDDING
+# ============================================================
 
 def create_query_embedding(question):
     """
-    Create query embedding with retry handling.
+    Convert customer question into vector embedding.
     """
 
-    print("STEP 4: Creating query embedding")
+    print(
+        "STEP 1: Creating query embedding"
+    )
 
     model = get_embedding_model()
 
@@ -336,16 +332,18 @@ def create_query_embedding(question):
                 f"{attempt + 1}/{MAX_RETRIES}"
             )
 
-            query_embedding = model.encode(
+            embedding = model.encode(
                 question,
                 normalize_embeddings=True
-            ).tolist()
+            )
+
+            query_embedding = embedding.tolist()
 
             elapsed = time.time() - start_time
 
             print(
-                f"STEP 4 COMPLETE: Embedding created "
-                f"in {elapsed:.2f} seconds"
+                f"Embedding created in "
+                f"{elapsed:.2f} seconds"
             )
 
             print(
@@ -380,16 +378,21 @@ def create_query_embedding(question):
     ) from last_error
 
 
-# =========================================================
-# SEARCH QDRANT WITH RETRY
-# =========================================================
+# ============================================================
+# SEARCH QDRANT
+# ============================================================
 
-def search_qdrant(query_embedding, top_k):
+def search_qdrant(
+    query_embedding,
+    top_k=TOP_K
+):
     """
-    Search Qdrant with retry handling.
+    Search the Samsung washing-machine knowledge base.
     """
 
-    print("STEP 5: Searching Qdrant")
+    print(
+        "STEP 2: Searching Qdrant"
+    )
 
     client = get_qdrant_client()
 
@@ -402,11 +405,11 @@ def search_qdrant(query_embedding, top_k):
         try:
 
             print(
-                f"Qdrant search attempt "
+                f"Qdrant attempt "
                 f"{attempt + 1}/{MAX_RETRIES}"
             )
 
-            search_results = client.query_points(
+            result = client.query_points(
                 collection_name=COLLECTION_NAME,
                 query=query_embedding,
                 limit=top_k,
@@ -416,18 +419,18 @@ def search_qdrant(query_embedding, top_k):
             elapsed = time.time() - start_time
 
             print(
-                f"STEP 5 COMPLETE: Qdrant search "
-                f"completed in {elapsed:.2f} seconds"
+                f"Qdrant search completed in "
+                f"{elapsed:.2f} seconds"
             )
 
-            return search_results
+            return result
 
         except Exception as e:
 
             last_error = e
 
             print(
-                f"ERROR in Qdrant: "
+                f"ERROR searching Qdrant: "
                 f"{repr(e)}"
             )
 
@@ -436,39 +439,40 @@ def search_qdrant(query_embedding, top_k):
                 delay = retry_delay(attempt)
 
                 print(
-                    f"Retrying Qdrant search in "
+                    f"Retrying Qdrant in "
                     f"{delay} seconds..."
                 )
 
                 time.sleep(delay)
 
     raise RuntimeError(
-        "Unable to search the knowledge base"
+        "Knowledge base search failed"
     ) from last_error
 
 
-# =========================================================
+# ============================================================
 # BUILD CONTEXT
-# =========================================================
+# ============================================================
 
 def build_context(points):
     """
-    Convert retrieved Qdrant points into
-    clean text context.
+    Extract useful text from Qdrant results.
     """
 
-    print("STEP 6: Building context")
+    print(
+        "STEP 3: Building manual context"
+    )
 
     context_parts = []
 
     source_names = []
 
-    for index, result in enumerate(
+    for index, point in enumerate(
         points,
         start=1
     ):
 
-        payload = result.payload or {}
+        payload = point.payload or {}
 
         raw_text = payload.get(
             "text",
@@ -480,36 +484,28 @@ def build_context(points):
         )
 
         score = getattr(
-            result,
+            point,
             "score",
-            None
+            0.0
         )
 
         source = payload.get(
             "source",
-            "Unknown document"
+            "manual"
         )
 
         print(
-            f"RESULT {index}"
+            f"Retrieved chunk {index}"
         )
 
         print(
             f"Score: {score}"
         )
 
-        print(
-            f"Source: {source}"
-        )
-
-        print(
-            f"Text length: {len(text)}"
-        )
-
         if text:
 
             context_parts.append(
-                f"[Document Chunk {index}]\n"
+                f"[Manual Section {index}]\n"
                 f"{text}"
             )
 
@@ -519,178 +515,151 @@ def build_context(points):
                     source
                 )
 
-            print(
-                f"Text retrieved: "
-                f"{text[:500]}"
-            )
-
         else:
 
             print(
-                "WARNING: Result has no usable text"
+                "WARNING: Empty text in result"
             )
-
-        print(
-            "------------------------------------------"
-        )
 
     context = "\n\n".join(
         context_parts
     )
 
     print(
-        f"STEP 6 COMPLETE: Context length = "
+        f"Context length: "
         f"{len(context)} characters"
     )
 
     print(
-        f"Number of context documents: "
+        f"Context chunks: "
         f"{len(context_parts)}"
     )
 
-    return context, source_names
+    return (
+        context,
+        source_names
+    )
 
 
-# =========================================================
-# CREATE STRICT RAG PROMPT
-# =========================================================
+# ============================================================
+# CREATE RAG PROMPT
+# ============================================================
 
 def create_rag_prompt(
     question,
     context
 ):
     """
-    Create a strict document-grounded prompt.
+    Strict manual-grounded RAG prompt.
     """
 
     print(
-        "STEP 7: Preparing strict grounding prompt"
+        "STEP 4: Creating RAG prompt"
     )
 
     prompt = f"""
-You are a technical support assistant for a
-Samsung washing machine.
+You are a Samsung washing machine technical
+support assistant.
 
-Your ONLY source of factual information is the
-MANUAL CONTEXT provided below.
+Your ONLY factual source is the MANUAL CONTEXT
+provided below.
 
-You must answer the user's question using ONLY
-information that is explicitly supported by the
-MANUAL CONTEXT.
+Answer the customer's question ONLY using
+information explicitly supported by that manual.
 
-STRICT GROUNDING RULES:
+STRICT RULES:
 
-1. The MANUAL CONTEXT is the only source of truth.
+1. Use ONLY the provided manual context.
 
-2. Do NOT use your general knowledge.
+2. Do NOT use general knowledge.
 
-3. Do NOT use information from the internet.
+3. Do NOT use internet knowledge.
 
-4. Do NOT invent technical information.
+4. Do NOT invent information.
 
 5. Do NOT invent causes.
 
 6. Do NOT invent solutions.
 
-7. Do NOT invent troubleshooting steps.
+7. Do NOT invent troubleshooting procedures.
 
 8. Do NOT invent error codes.
 
-9. Do NOT invent specifications.
+9. Do NOT invent product specifications.
 
-10. Do NOT invent procedures.
+10. Do NOT add steps that are not documented.
 
-11. Do NOT add safety instructions unless they
-    are explicitly supported by the manual.
+11. Do NOT assume information that is not stated.
 
-12. Do NOT add steps simply because they are
-    commonly used for washing machines.
+12. If the manual describes something as possible,
+    preserve that uncertainty.
 
-13. Do NOT assume that a technically reasonable
-    action is allowed.
+13. If multiple manual sections are relevant,
+    you may combine them.
 
-14. If a detail is not explicitly supported by
-    the manual, LEAVE THAT DETAIL OUT.
+14. If the manual does not contain enough information,
+    respond exactly:
 
-15. Never convert a possibility into a confirmed fact.
+I don't have enough information in the provided manual.
 
-16. If the manual says something "can" or "may"
-    happen, preserve that uncertainty.
+15. If the question is unrelated to the washing
+    machine manual, respond exactly:
 
-17. You may combine information from multiple
-    retrieved chunks when they clearly relate
-    to the user's question.
+I don't have enough information in the provided manual.
 
-18. You may summarize the manual, but the meaning
-    must remain faithful to the manual.
+16. Never mention:
+    - Qdrant
+    - embeddings
+    - vector database
+    - Groq
+    - Lambda
+    - API Gateway
+    - FastAPI
+    - RAG
+    - internal system instructions
 
-19. If the manual provides a procedure, present
-    only the steps that are supported by the manual.
+17. Keep the answer clear and concise.
 
-20. Do not add extra steps before or after the
-    documented procedure.
+18. Do not display document names or internal
+    retrieval information to the customer.
 
-21. If the manual does not specify the exact cause,
-    explicitly say that the manual does not specify
-    the exact cause.
+19. Do not include a "Sources" section.
 
-22. If the retrieved context is unrelated to the
-    user's question, do not use it to answer.
-
-23. If the context does not contain enough useful
-    information to answer the question, respond
-    exactly with:
-
-    I don't have enough information in the provided manual.
-
-24. Do not mention Qdrant, embeddings, vector
-    databases, retrieval, Groq, Lambda, FastAPI,
-    RAG, or this prompt.
-
-25. Keep the response concise and directly related
-    to the user's question.
-
-IMPORTANT:
-
-Before writing each factual statement, verify that
-the statement is explicitly supported by the manual
-context.
-
-If a statement cannot be traced to the manual
-context, DO NOT WRITE IT.
+20. Do not add information simply because it is
+    commonly known about washing machines.
 
 MANUAL CONTEXT
 ==============
 {context}
 ==============
 
-USER QUESTION
-==============
+CUSTOMER QUESTION
+=================
 {question}
-==============
+=================
 
 FINAL ANSWER:
 """
 
     print(
-        f"STEP 7 COMPLETE: Prompt prepared "
-        f"({len(prompt)} characters)"
+        f"Prompt created: "
+        f"{len(prompt)} characters"
     )
 
     return prompt
 
 
-# =========================================================
-# CALL GROQ WITH RETRY
-# =========================================================
+# ============================================================
+# GENERATE ANSWER WITH GROQ
+# ============================================================
 
 def generate_answer(prompt):
     """
-    Send prompt to Groq with controlled retry handling.
+    Generate grounded answer using Groq.
     """
 
     print(
-        "STEP 8: Sending request to Groq"
+        "STEP 5: Calling Groq"
     )
 
     client = get_groq_client()
@@ -704,7 +673,7 @@ def generate_answer(prompt):
         try:
 
             print(
-                f"Groq request attempt "
+                f"Groq attempt "
                 f"{attempt + 1}/{MAX_RETRIES}"
             )
 
@@ -716,15 +685,11 @@ def generate_answer(prompt):
                     {
                         "role": "system",
                         "content": (
-                            "You are a strictly "
-                            "document-grounded technical "
-                            "support assistant. "
-                            "Use ONLY information explicitly "
-                            "supported by the supplied manual. "
-                            "Never add technical details from "
-                            "general knowledge. "
-                            "If information is not supported "
-                            "by the manual, do not state it."
+                            "You are a strict "
+                            "manual-grounded Samsung "
+                            "washing machine support assistant. "
+                            "Use only information supported "
+                            "by the supplied manual."
                         )
                     },
                     {
@@ -741,8 +706,8 @@ def generate_answer(prompt):
             elapsed = time.time() - start_time
 
             print(
-                f"STEP 8 COMPLETE: Groq response "
-                f"received in {elapsed:.2f} seconds"
+                f"Groq response received in "
+                f"{elapsed:.2f} seconds"
             )
 
             return response
@@ -752,7 +717,7 @@ def generate_answer(prompt):
             last_error = e
 
             print(
-                f"ERROR in Groq: "
+                f"ERROR calling Groq: "
                 f"{repr(e)}"
             )
 
@@ -761,28 +726,28 @@ def generate_answer(prompt):
                 delay = retry_delay(attempt)
 
                 print(
-                    f"Retrying Groq request in "
+                    f"Retrying Groq in "
                     f"{delay} seconds..."
                 )
 
                 time.sleep(delay)
 
     raise RuntimeError(
-        "Unable to generate AI response"
+        "AI generation failed"
     ) from last_error
 
 
-# =========================================================
+# ============================================================
 # EXTRACT ANSWER
-# =========================================================
+# ============================================================
 
 def extract_answer(response):
     """
-    Safely extract answer from Groq response.
+    Safely extract generated answer.
     """
 
     print(
-        "STEP 9: Extracting final answer"
+        "STEP 6: Extracting answer"
     )
 
     try:
@@ -798,7 +763,7 @@ def extract_answer(response):
     except Exception as e:
 
         print(
-            f"ERROR extracting Groq response: "
+            f"ERROR extracting answer: "
             f"{repr(e)}"
         )
 
@@ -807,15 +772,16 @@ def extract_answer(response):
     if not answer:
 
         print(
-            "WARNING: Groq returned an empty answer"
+            "WARNING: Empty AI response"
         )
 
         return None
 
-    # Remove unwanted prefixes
+    # Remove accidental answer prefixes.
     prefixes = [
-        "Answer:",
+        "FINAL ANSWER:",
         "Final Answer:",
+        "Answer:",
         "ANSWER:"
     ]
 
@@ -830,9 +796,9 @@ def extract_answer(response):
     return answer
 
 
-# =========================================================
+# ============================================================
 # MAIN RAG FUNCTION
-# =========================================================
+# ============================================================
 
 def rag_answer(
     question: str,
@@ -841,37 +807,33 @@ def rag_answer(
     """
     Complete RAG pipeline.
 
-    Pipeline:
-
-    User Question
-        ↓
-    Validation
-        ↓
-    Lazy Model Loading
-        ↓
-    Query Embedding
-        ↓
-    Qdrant Search
-        ↓
-    Relevance Check
-        ↓
-    Context Building
-        ↓
-    Strict RAG Prompt
-        ↓
-    Groq
-        ↓
-    Answer Extraction
-        ↓
-    Final Answer
+    Customer Question
+            ↓
+       Validation
+            ↓
+      Lazy ML Loading
+            ↓
+       Embedding
+            ↓
+       Qdrant Search
+            ↓
+      Score Checking
+            ↓
+        Context
+            ↓
+       Strict Prompt
+            ↓
+          Groq
+            ↓
+      Final Answer
     """
+
+    request_start = time.time()
 
     print("")
     print("==========================================")
     print("RAG REQUEST STARTED")
     print("==========================================")
-
-    request_start_time = time.time()
 
     print(
         f"Question: {question}"
@@ -889,9 +851,9 @@ def rag_answer(
     print("==========================================")
 
 
-    # =====================================================
-    # STEP 1: VALIDATE QUESTION
-    # =====================================================
+    # ========================================================
+    # STEP 0: VALIDATE
+    # ========================================================
 
     question, validation_error = validate_question(
         question
@@ -902,9 +864,9 @@ def rag_answer(
         return validation_error
 
 
-    # =====================================================
-    # STEP 2: CREATE QUERY EMBEDDING
-    # =====================================================
+    # ========================================================
+    # STEP 1: EMBEDDING
+    # ========================================================
 
     try:
 
@@ -915,7 +877,7 @@ def rag_answer(
     except Exception as e:
 
         print(
-            f"FATAL ERROR during embedding: "
+            f"Embedding pipeline failed: "
             f"{repr(e)}"
         )
 
@@ -925,9 +887,9 @@ def rag_answer(
         )
 
 
-    # =====================================================
-    # STEP 3: SEARCH QDRANT
-    # =====================================================
+    # ========================================================
+    # STEP 2: QDRANT
+    # ========================================================
 
     try:
 
@@ -939,19 +901,19 @@ def rag_answer(
     except Exception as e:
 
         print(
-            f"FATAL ERROR during Qdrant search: "
+            f"Qdrant pipeline failed: "
             f"{repr(e)}"
         )
 
         return (
-            "The knowledge base is temporarily "
-            "unavailable. Please try again."
+            "The knowledge base is temporarily unavailable. "
+            "Please try again."
         )
 
 
-    # =====================================================
-    # STEP 4: CHECK SEARCH RESULTS
-    # =====================================================
+    # ========================================================
+    # STEP 3: EXTRACT POINTS
+    # ========================================================
 
     points = getattr(
         search_results,
@@ -960,14 +922,14 @@ def rag_answer(
     )
 
     print(
-        f"Number of results: "
+        f"Retrieved points: "
         f"{len(points)}"
     )
 
     if not points:
 
         print(
-            "WARNING: Qdrant returned no results"
+            "No Qdrant results"
         )
 
         return (
@@ -976,9 +938,9 @@ def rag_answer(
         )
 
 
-    # =====================================================
-    # STEP 5: CHECK RELEVANCE SCORE
-    # =====================================================
+    # ========================================================
+    # STEP 4: RELEVANCE CHECK
+    # ========================================================
 
     best_score = getattr(
         points[0],
@@ -990,27 +952,16 @@ def rag_answer(
 
         best_score = 0.0
 
-
     print(
         f"Best similarity score: "
         f"{best_score}"
     )
 
-
     if best_score < SCORE_THRESHOLD:
 
         print(
-            "WARNING: Best result is below "
-            "the relevance threshold."
-        )
-
-        print(
-            f"Best score: {best_score}"
-        )
-
-        print(
-            f"Required score: "
-            f"{SCORE_THRESHOLD}"
+            "Question rejected because the "
+            "retrieved manual content is not relevant."
         )
 
         return (
@@ -1019,9 +970,9 @@ def rag_answer(
         )
 
 
-    # =====================================================
-    # STEP 6: BUILD CONTEXT
-    # =====================================================
+    # ========================================================
+    # STEP 5: BUILD CONTEXT
+    # ========================================================
 
     try:
 
@@ -1032,25 +983,20 @@ def rag_answer(
     except Exception as e:
 
         print(
-            f"ERROR building context: "
+            f"Context creation failed: "
             f"{repr(e)}"
         )
 
         return (
-            "Unable to process the knowledge-base "
-            "information. Please try again."
+            "Unable to process the manual information. "
+            "Please try again."
         )
 
-
-    # =====================================================
-    # STEP 7: CHECK CONTEXT
-    # =====================================================
 
     if not context.strip():
 
         print(
-            "WARNING: Qdrant returned no usable "
-            "text context"
+            "No usable manual context"
         )
 
         return (
@@ -1059,24 +1005,24 @@ def rag_answer(
         )
 
 
-    # =====================================================
-    # DISPLAY RETRIEVED CONTEXT
-    # =====================================================
+    # ========================================================
+    # INTERNAL LOGGING ONLY
+    # ========================================================
 
     print(
-        "========== RETRIEVED CONTEXT =========="
+        "========== RETRIEVED MANUAL CONTEXT =========="
     )
 
     print(context)
 
     print(
-        "========================================"
+        "==============================================="
     )
 
 
-    # =====================================================
-    # STEP 8: CREATE STRICT RAG PROMPT
-    # =====================================================
+    # ========================================================
+    # STEP 6: CREATE PROMPT
+    # ========================================================
 
     prompt = create_rag_prompt(
         question,
@@ -1084,9 +1030,9 @@ def rag_answer(
     )
 
 
-    # =====================================================
-    # STEP 9: CALL GROQ
-    # =====================================================
+    # ========================================================
+    # STEP 7: GROQ
+    # ========================================================
 
     try:
 
@@ -1097,7 +1043,7 @@ def rag_answer(
     except Exception as e:
 
         print(
-            f"FATAL ERROR during Groq generation: "
+            f"Groq pipeline failed: "
             f"{repr(e)}"
         )
 
@@ -1107,9 +1053,9 @@ def rag_answer(
         )
 
 
-    # =====================================================
-    # STEP 10: EXTRACT ANSWER
-    # =====================================================
+    # ========================================================
+    # STEP 8: EXTRACT ANSWER
+    # ========================================================
 
     answer = extract_answer(
         response
@@ -1123,31 +1069,21 @@ def rag_answer(
         )
 
 
-    # =====================================================
-    # STEP 11: FINAL LOGGING
-    # =====================================================
+    # ========================================================
+    # FINAL LOGGING
+    # ========================================================
 
     total_time = (
-        time.time() - request_start_time
+        time.time() - request_start
     )
 
     print("")
     print("==========================================")
-    print("FINAL ANSWER")
-    print("==========================================")
-
-    print(answer)
-
+    print("RAG REQUEST COMPLETED")
     print("==========================================")
 
     print(
-        f"Source documents: "
-        f"{source_names}"
-    )
-
-    print(
-        f"Best retrieval score: "
-        f"{best_score}"
+        f"Best score: {best_score}"
     )
 
     print(
@@ -1156,11 +1092,16 @@ def rag_answer(
     )
 
     print(
-        "RAG REQUEST COMPLETE"
+        f"Retrieved sources: "
+        f"{source_names}"
     )
 
     print(
-        "=========================================="
-    )
+        "==========================================")
+
+
+    # ========================================================
+    # CUSTOMER ONLY RECEIVES ANSWER
+    # ========================================================
 
     return answer
