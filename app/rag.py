@@ -7,18 +7,18 @@ from qdrant_client import QdrantClient
 from groq import Groq
 
 
-# ==================================================
+# =========================================================
 # ENVIRONMENT VARIABLES
-# ==================================================
+# =========================================================
 
 QDRANT_URL = os.environ["QDRANT_URL"]
 QDRANT_API_KEY = os.environ["QDRANT_API_KEY"]
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 
 
-# ==================================================
+# =========================================================
 # CONFIGURATION
-# ==================================================
+# =========================================================
 
 MODEL_PATH = "/opt/models/all-MiniLM-L6-v2"
 
@@ -27,117 +27,231 @@ COLLECTION_NAME = "samsung_washing_machine"
 # Number of chunks retrieved from Qdrant
 TOP_K = 3
 
-# Minimum similarity score required for the
-# best retrieved document to be considered relevant.
-#
-# This helps prevent unrelated questions from being
-# answered using weakly related washing-machine chunks.
+# Minimum similarity score
 SCORE_THRESHOLD = 0.45
 
 # Groq model
 GROQ_MODEL = "openai/gpt-oss-20b"
 
+# Timeouts
+QDRANT_TIMEOUT = 10
+GROQ_TIMEOUT = 20
 
-# ==================================================
-# LOAD EMBEDDING MODEL
-# ==================================================
+# Retry configuration
+MAX_RETRIES = 2
 
-print("STEP 1: Loading Sentence Transformer model")
+# Maximum question size
+MAX_QUESTION_LENGTH = 1000
 
-start_time = time.time()
 
-try:
+# =========================================================
+# GLOBAL CLIENTS / MODEL
+# =========================================================
+#
+# IMPORTANT:
+# Do NOT load SentenceTransformer during Lambda initialization.
+#
+# The old code did:
+#
+# embedding_model = SentenceTransformer(MODEL_PATH)
+#
+# That caused Lambda INIT timeout.
+#
+# We now load the model only when the first request arrives.
+# =========================================================
 
-    embedding_model = SentenceTransformer(
-        MODEL_PATH
-    )
+embedding_model = None
+qdrant_client = None
+groq_client = None
 
-except Exception as e:
+
+# =========================================================
+# RETRY HELPER
+# =========================================================
+
+def retry_delay(attempt: int) -> float:
+    """
+    Exponential backoff delay.
+
+    attempt 0 -> 1 second
+    attempt 1 -> 2 seconds
+    """
+    return min(2 ** attempt, 4)
+
+
+# =========================================================
+# LOAD EMBEDDING MODEL LAZILY
+# =========================================================
+
+def get_embedding_model():
+    """
+    Load the SentenceTransformer model only when required.
+
+    This prevents the model from being loaded during
+    Lambda cold-start initialization.
+    """
+
+    global embedding_model
+
+    if embedding_model is not None:
+        return embedding_model
+
+    print("==========================================")
+    print("LOADING EMBEDDING MODEL")
+    print("==========================================")
+
+    start_time = time.time()
+
+    last_error = None
+
+    for attempt in range(MAX_RETRIES):
+
+        try:
+
+            print(
+                f"Embedding model load attempt "
+                f"{attempt + 1}/{MAX_RETRIES}"
+            )
+
+            embedding_model = SentenceTransformer(
+                MODEL_PATH
+            )
+
+            elapsed = time.time() - start_time
+
+            print(
+                f"EMBEDDING MODEL LOADED "
+                f"in {elapsed:.2f} seconds"
+            )
+
+            return embedding_model
+
+        except Exception as e:
+
+            last_error = e
+
+            print(
+                f"ERROR loading embedding model: "
+                f"{repr(e)}"
+            )
+
+            if attempt < MAX_RETRIES - 1:
+
+                delay = retry_delay(attempt)
+
+                print(
+                    f"Retrying model load in "
+                    f"{delay} seconds..."
+                )
+
+                time.sleep(delay)
 
     print(
-        f"ERROR loading embedding model: {repr(e)}"
+        "FATAL: Unable to load embedding model"
     )
 
-    raise
+    raise RuntimeError(
+        "Unable to load embedding model"
+    ) from last_error
 
 
-print(
-    f"STEP 1 COMPLETE: Model loaded in "
-    f"{time.time() - start_time:.2f} seconds"
-)
+# =========================================================
+# CREATE QDRANT CLIENT LAZILY
+# =========================================================
+
+def get_qdrant_client():
+    """
+    Create Qdrant client only when required.
+    """
+
+    global qdrant_client
+
+    if qdrant_client is not None:
+        return qdrant_client
+
+    print("Creating Qdrant client...")
+
+    try:
+
+        qdrant_client = QdrantClient(
+            url=QDRANT_URL,
+            api_key=QDRANT_API_KEY,
+            timeout=QDRANT_TIMEOUT
+        )
+
+        print(
+            "Qdrant client created successfully"
+        )
+
+        return qdrant_client
+
+    except Exception as e:
+
+        print(
+            f"ERROR creating Qdrant client: "
+            f"{repr(e)}"
+        )
+
+        raise RuntimeError(
+            "Unable to create knowledge-base client"
+        ) from e
 
 
-# ==================================================
-# QDRANT CLIENT
-# ==================================================
+# =========================================================
+# CREATE GROQ CLIENT LAZILY
+# =========================================================
 
-print("STEP 2: Creating Qdrant client")
+def get_groq_client():
+    """
+    Create Groq client only when required.
+    """
 
-try:
+    global groq_client
 
-    qdrant_client = QdrantClient(
-        url=QDRANT_URL,
-        api_key=QDRANT_API_KEY,
-        timeout=15
-    )
+    if groq_client is not None:
+        return groq_client
 
-except Exception as e:
+    print("Creating Groq client...")
 
-    print(
-        f"ERROR creating Qdrant client: {repr(e)}"
-    )
+    try:
 
-    raise
+        groq_client = Groq(
+            api_key=GROQ_API_KEY,
+            timeout=GROQ_TIMEOUT,
+            max_retries=0
+        )
 
+        print(
+            "Groq client created successfully"
+        )
 
-print(
-    "STEP 2 COMPLETE: Qdrant client created"
-)
+        return groq_client
 
+    except Exception as e:
 
-# ==================================================
-# GROQ CLIENT
-# ==================================================
+        print(
+            f"ERROR creating Groq client: "
+            f"{repr(e)}"
+        )
 
-print("STEP 3: Creating Groq client")
-
-try:
-
-    groq_client = Groq(
-        api_key=GROQ_API_KEY,
-        timeout=30.0,
-        max_retries=0
-    )
-
-except Exception as e:
-
-    print(
-        f"ERROR creating Groq client: {repr(e)}"
-    )
-
-    raise
+        raise RuntimeError(
+            "Unable to create AI service client"
+        ) from e
 
 
-print(
-    "STEP 3 COMPLETE: Groq client created"
-)
-
-
-# ==================================================
+# =========================================================
 # TEXT CLEANING
-# ==================================================
+# =========================================================
 
 def clean_text(text: str) -> str:
     """
-    Remove unwanted control characters from retrieved
-    document text while preserving normal whitespace.
+    Remove unwanted control characters while
+    preserving normal whitespace.
     """
 
     if not text:
         return ""
 
-    # Remove ASCII control characters except:
-    # newline, carriage return and tab.
     text = re.sub(
         r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]",
         "",
@@ -147,26 +261,14 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 
-# ==================================================
-# RAG FUNCTION
-# ==================================================
+# =========================================================
+# VALIDATE QUESTION
+# =========================================================
 
-def rag_answer(
-    question: str,
-    top_k: int = TOP_K
-):
-
-    print("==========================================")
-    print("RAG REQUEST STARTED")
-    print(f"Question: {question}")
-    print(f"Top K: {top_k}")
-    print(f"Score threshold: {SCORE_THRESHOLD}")
-    print("==========================================")
-
-
-    # ==================================================
-    # VALIDATE QUESTION
-    # ==================================================
+def validate_question(question):
+    """
+    Validate and normalize user question.
+    """
 
     if not isinstance(question, str):
 
@@ -175,12 +277,11 @@ def rag_answer(
         )
 
         return (
+            None,
             "Please provide a valid question."
         )
 
-
     question = question.strip()
-
 
     if not question:
 
@@ -189,165 +290,178 @@ def rag_answer(
         )
 
         return (
-            "Please enter a question about the "
-            "washing machine."
+            None,
+            "Please enter a question about the washing machine."
         )
 
-
-    # Prevent unnecessarily large requests
-    if len(question) > 1000:
+    if len(question) > MAX_QUESTION_LENGTH:
 
         print(
-            "WARNING: Question exceeded 1000 characters"
+            f"WARNING: Question exceeded "
+            f"{MAX_QUESTION_LENGTH} characters"
         )
 
         return (
-            "Please keep your question under "
-            "1000 characters."
+            None,
+            f"Please keep your question under "
+            f"{MAX_QUESTION_LENGTH} characters."
         )
 
+    return question, None
 
-    # ==================================================
-    # STEP 4: CREATE QUERY EMBEDDING
-    # ==================================================
+
+# =========================================================
+# CREATE QUERY EMBEDDING WITH RETRY
+# =========================================================
+
+def create_query_embedding(question):
+    """
+    Create query embedding with retry handling.
+    """
 
     print("STEP 4: Creating query embedding")
 
+    model = get_embedding_model()
+
     start_time = time.time()
 
-    try:
+    last_error = None
 
-        query_embedding = embedding_model.encode(
-            question,
-            normalize_embeddings=True
-        ).tolist()
+    for attempt in range(MAX_RETRIES):
 
-    except Exception as e:
+        try:
 
-        print(
-            f"ERROR in embedding: {repr(e)}"
-        )
+            print(
+                f"Embedding attempt "
+                f"{attempt + 1}/{MAX_RETRIES}"
+            )
 
-        return (
-            "Error creating the query embedding."
-        )
+            query_embedding = model.encode(
+                question,
+                normalize_embeddings=True
+            ).tolist()
+
+            elapsed = time.time() - start_time
+
+            print(
+                f"STEP 4 COMPLETE: Embedding created "
+                f"in {elapsed:.2f} seconds"
+            )
+
+            print(
+                f"Embedding dimensions: "
+                f"{len(query_embedding)}"
+            )
+
+            return query_embedding
+
+        except Exception as e:
+
+            last_error = e
+
+            print(
+                f"ERROR creating embedding: "
+                f"{repr(e)}"
+            )
+
+            if attempt < MAX_RETRIES - 1:
+
+                delay = retry_delay(attempt)
+
+                print(
+                    f"Retrying embedding in "
+                    f"{delay} seconds..."
+                )
+
+                time.sleep(delay)
+
+    raise RuntimeError(
+        "Unable to create query embedding"
+    ) from last_error
 
 
-    print(
-        f"STEP 4 COMPLETE: Embedding created in "
-        f"{time.time() - start_time:.2f} seconds"
-    )
+# =========================================================
+# SEARCH QDRANT WITH RETRY
+# =========================================================
 
-    print(
-        f"Embedding dimensions: "
-        f"{len(query_embedding)}"
-    )
-
-
-    # ==================================================
-    # STEP 5: SEARCH QDRANT
-    # ==================================================
+def search_qdrant(query_embedding, top_k):
+    """
+    Search Qdrant with retry handling.
+    """
 
     print("STEP 5: Searching Qdrant")
 
+    client = get_qdrant_client()
+
     start_time = time.time()
 
-    try:
+    last_error = None
 
-        search_results = qdrant_client.query_points(
-            collection_name=COLLECTION_NAME,
-            query=query_embedding,
-            limit=top_k,
-            with_payload=True
-        )
+    for attempt in range(MAX_RETRIES):
 
-    except Exception as e:
+        try:
 
-        print(
-            f"ERROR in Qdrant: {repr(e)}"
-        )
+            print(
+                f"Qdrant search attempt "
+                f"{attempt + 1}/{MAX_RETRIES}"
+            )
 
-        return (
-            "Unable to search the knowledge base."
-        )
+            search_results = client.query_points(
+                collection_name=COLLECTION_NAME,
+                query=query_embedding,
+                limit=top_k,
+                with_payload=True
+            )
 
+            elapsed = time.time() - start_time
 
-    print(
-        f"STEP 5 COMPLETE: Qdrant search completed in "
-        f"{time.time() - start_time:.2f} seconds"
-    )
+            print(
+                f"STEP 5 COMPLETE: Qdrant search "
+                f"completed in {elapsed:.2f} seconds"
+            )
 
+            return search_results
 
-    points = search_results.points
+        except Exception as e:
 
-    print(
-        f"Number of results: {len(points)}"
-    )
+            last_error = e
 
+            print(
+                f"ERROR in Qdrant: "
+                f"{repr(e)}"
+            )
 
-    # ==================================================
-    # STEP 5A: CHECK RETRIEVAL RELEVANCE
-    # ==================================================
+            if attempt < MAX_RETRIES - 1:
 
-    if not points:
+                delay = retry_delay(attempt)
 
-        print(
-            "WARNING: Qdrant returned no results"
-        )
+                print(
+                    f"Retrying Qdrant search in "
+                    f"{delay} seconds..."
+                )
 
-        return (
-            "I don't have enough information "
-            "in the provided manual."
-        )
+                time.sleep(delay)
 
-
-    best_score = getattr(
-        points[0],
-        "score",
-        0.0
-    )
-
-    print(
-        f"Best similarity score: {best_score}"
-    )
+    raise RuntimeError(
+        "Unable to search the knowledge base"
+    ) from last_error
 
 
-    if best_score is None:
+# =========================================================
+# BUILD CONTEXT
+# =========================================================
 
-        best_score = 0.0
-
-
-    if best_score < SCORE_THRESHOLD:
-
-        print(
-            "WARNING: Best result is below "
-            "the relevance threshold."
-        )
-
-        print(
-            f"Best score: {best_score}"
-        )
-
-        print(
-            f"Required score: {SCORE_THRESHOLD}"
-        )
-
-        return (
-            "I don't have enough information "
-            "in the provided manual."
-        )
-
-
-    # ==================================================
-    # STEP 6: BUILD CONTEXT
-    # ==================================================
+def build_context(points):
+    """
+    Convert retrieved Qdrant points into
+    clean text context.
+    """
 
     print("STEP 6: Building context")
 
     context_parts = []
 
     source_names = []
-
 
     for index, result in enumerate(
         points,
@@ -365,19 +479,16 @@ def rag_answer(
             raw_text
         )
 
-
         score = getattr(
             result,
             "score",
             None
         )
 
-
         source = payload.get(
             "source",
             "Unknown document"
         )
-
 
         print(
             f"RESULT {index}"
@@ -395,11 +506,11 @@ def rag_answer(
             f"Text length: {len(text)}"
         )
 
-
         if text:
 
             context_parts.append(
-                f"[Document Chunk {index}]\n{text}"
+                f"[Document Chunk {index}]\n"
+                f"{text}"
             )
 
             if source not in source_names:
@@ -419,16 +530,13 @@ def rag_answer(
                 "WARNING: Result has no usable text"
             )
 
-
         print(
             "------------------------------------------"
         )
 
-
     context = "\n\n".join(
         context_parts
     )
-
 
     print(
         f"STEP 6 COMPLETE: Context length = "
@@ -440,47 +548,24 @@ def rag_answer(
         f"{len(context_parts)}"
     )
 
-
-    # ==================================================
-    # CHECK CONTEXT
-    # ==================================================
-
-    if not context.strip():
-
-        print(
-            "WARNING: Qdrant returned no usable "
-            "text context"
-        )
-
-        return (
-            "I don't have enough information "
-            "in the provided manual."
-        )
+    return context, source_names
 
 
-    # ==================================================
-    # DISPLAY RETRIEVED CONTEXT
-    # ==================================================
+# =========================================================
+# CREATE STRICT RAG PROMPT
+# =========================================================
 
-    print(
-        "========== RETRIEVED CONTEXT =========="
-    )
-
-    print(context)
-
-    print(
-        "========================================"
-    )
-
-
-    # ==================================================
-    # STEP 7: STRICT RAG PROMPT
-    # ==================================================
+def create_rag_prompt(
+    question,
+    context
+):
+    """
+    Create a strict document-grounded prompt.
+    """
 
     print(
         "STEP 7: Preparing strict grounding prompt"
     )
-
 
     prompt = f"""
 You are a technical support assistant for a
@@ -587,83 +672,118 @@ USER QUESTION
 FINAL ANSWER:
 """
 
-
     print(
         f"STEP 7 COMPLETE: Prompt prepared "
         f"({len(prompt)} characters)"
     )
 
+    return prompt
 
-    # ==================================================
-    # STEP 8: CALL GROQ
-    # ==================================================
+
+# =========================================================
+# CALL GROQ WITH RETRY
+# =========================================================
+
+def generate_answer(prompt):
+    """
+    Send prompt to Groq with controlled retry handling.
+    """
 
     print(
         "STEP 8: Sending request to Groq"
     )
 
+    client = get_groq_client()
+
     start_time = time.time()
 
+    last_error = None
 
-    try:
+    for attempt in range(MAX_RETRIES):
 
-        response = groq_client.chat.completions.create(
+        try:
 
-            model=GROQ_MODEL,
+            print(
+                f"Groq request attempt "
+                f"{attempt + 1}/{MAX_RETRIES}"
+            )
 
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a strictly "
-                        "document-grounded technical "
-                        "support assistant. "
-                        "Use ONLY information explicitly "
-                        "supported by the supplied manual. "
-                        "Never add technical details from "
-                        "general knowledge. "
-                        "If information is not supported "
-                        "by the manual, do not state it."
-                    )
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
+            response = client.chat.completions.create(
 
-            temperature=0.0,
+                model=GROQ_MODEL,
 
-            max_tokens=500
-        )
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a strictly "
+                            "document-grounded technical "
+                            "support assistant. "
+                            "Use ONLY information explicitly "
+                            "supported by the supplied manual. "
+                            "Never add technical details from "
+                            "general knowledge. "
+                            "If information is not supported "
+                            "by the manual, do not state it."
+                        )
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+
+                temperature=0.0,
+
+                max_tokens=500
+            )
+
+            elapsed = time.time() - start_time
+
+            print(
+                f"STEP 8 COMPLETE: Groq response "
+                f"received in {elapsed:.2f} seconds"
+            )
+
+            return response
+
+        except Exception as e:
+
+            last_error = e
+
+            print(
+                f"ERROR in Groq: "
+                f"{repr(e)}"
+            )
+
+            if attempt < MAX_RETRIES - 1:
+
+                delay = retry_delay(attempt)
+
+                print(
+                    f"Retrying Groq request in "
+                    f"{delay} seconds..."
+                )
+
+                time.sleep(delay)
+
+    raise RuntimeError(
+        "Unable to generate AI response"
+    ) from last_error
 
 
-    except Exception as e:
+# =========================================================
+# EXTRACT ANSWER
+# =========================================================
 
-        print(
-            f"ERROR in Groq: {repr(e)}"
-        )
-
-        return (
-            "Unable to generate an answer "
-            "from the AI model."
-        )
-
-
-    print(
-        f"STEP 8 COMPLETE: Groq response received in "
-        f"{time.time() - start_time:.2f} seconds"
-    )
-
-
-    # ==================================================
-    # STEP 9: EXTRACT ANSWER
-    # ==================================================
+def extract_answer(response):
+    """
+    Safely extract answer from Groq response.
+    """
 
     print(
         "STEP 9: Extracting final answer"
     )
-
 
     try:
 
@@ -675,7 +795,6 @@ FINAL ANSWER:
             .strip()
         )
 
-
     except Exception as e:
 
         print(
@@ -683,14 +802,7 @@ FINAL ANSWER:
             f"{repr(e)}"
         )
 
-        return (
-            "Unable to extract the AI response."
-        )
-
-
-    # ==================================================
-    # STEP 10: EMPTY RESPONSE CHECK
-    # ==================================================
+        return None
 
     if not answer:
 
@@ -698,22 +810,14 @@ FINAL ANSWER:
             "WARNING: Groq returned an empty answer"
         )
 
-        return (
-            "I don't have enough information "
-            "in the provided manual."
-        )
+        return None
 
-
-    # ==================================================
-    # STEP 11: REMOVE UNWANTED MODEL PREFIXES
-    # ==================================================
-
+    # Remove unwanted prefixes
     prefixes = [
         "Answer:",
         "Final Answer:",
         "ANSWER:"
     ]
-
 
     for prefix in prefixes:
 
@@ -723,31 +827,332 @@ FINAL ANSWER:
                 len(prefix):
             ].strip()
 
+    return answer
 
-    # ==================================================
-    # STEP 12: FINAL ANSWER
-    # ==================================================
+
+# =========================================================
+# MAIN RAG FUNCTION
+# =========================================================
+
+def rag_answer(
+    question: str,
+    top_k: int = TOP_K
+):
+    """
+    Complete RAG pipeline.
+
+    Pipeline:
+
+    User Question
+        ↓
+    Validation
+        ↓
+    Lazy Model Loading
+        ↓
+    Query Embedding
+        ↓
+    Qdrant Search
+        ↓
+    Relevance Check
+        ↓
+    Context Building
+        ↓
+    Strict RAG Prompt
+        ↓
+    Groq
+        ↓
+    Answer Extraction
+        ↓
+    Final Answer
+    """
+
+    print("")
+    print("==========================================")
+    print("RAG REQUEST STARTED")
+    print("==========================================")
+
+    request_start_time = time.time()
 
     print(
-        "=========================================="
+        f"Question: {question}"
     )
 
     print(
-        "FINAL ANSWER:"
+        f"Top K: {top_k}"
     )
+
+    print(
+        f"Score threshold: "
+        f"{SCORE_THRESHOLD}"
+    )
+
+    print("==========================================")
+
+
+    # =====================================================
+    # STEP 1: VALIDATE QUESTION
+    # =====================================================
+
+    question, validation_error = validate_question(
+        question
+    )
+
+    if validation_error:
+
+        return validation_error
+
+
+    # =====================================================
+    # STEP 2: CREATE QUERY EMBEDDING
+    # =====================================================
+
+    try:
+
+        query_embedding = create_query_embedding(
+            question
+        )
+
+    except Exception as e:
+
+        print(
+            f"FATAL ERROR during embedding: "
+            f"{repr(e)}"
+        )
+
+        return (
+            "The AI service is temporarily unavailable. "
+            "Please try again."
+        )
+
+
+    # =====================================================
+    # STEP 3: SEARCH QDRANT
+    # =====================================================
+
+    try:
+
+        search_results = search_qdrant(
+            query_embedding,
+            top_k
+        )
+
+    except Exception as e:
+
+        print(
+            f"FATAL ERROR during Qdrant search: "
+            f"{repr(e)}"
+        )
+
+        return (
+            "The knowledge base is temporarily "
+            "unavailable. Please try again."
+        )
+
+
+    # =====================================================
+    # STEP 4: CHECK SEARCH RESULTS
+    # =====================================================
+
+    points = getattr(
+        search_results,
+        "points",
+        []
+    )
+
+    print(
+        f"Number of results: "
+        f"{len(points)}"
+    )
+
+    if not points:
+
+        print(
+            "WARNING: Qdrant returned no results"
+        )
+
+        return (
+            "I don't have enough information "
+            "in the provided manual."
+        )
+
+
+    # =====================================================
+    # STEP 5: CHECK RELEVANCE SCORE
+    # =====================================================
+
+    best_score = getattr(
+        points[0],
+        "score",
+        0.0
+    )
+
+    if best_score is None:
+
+        best_score = 0.0
+
+
+    print(
+        f"Best similarity score: "
+        f"{best_score}"
+    )
+
+
+    if best_score < SCORE_THRESHOLD:
+
+        print(
+            "WARNING: Best result is below "
+            "the relevance threshold."
+        )
+
+        print(
+            f"Best score: {best_score}"
+        )
+
+        print(
+            f"Required score: "
+            f"{SCORE_THRESHOLD}"
+        )
+
+        return (
+            "I don't have enough information "
+            "in the provided manual."
+        )
+
+
+    # =====================================================
+    # STEP 6: BUILD CONTEXT
+    # =====================================================
+
+    try:
+
+        context, source_names = build_context(
+            points
+        )
+
+    except Exception as e:
+
+        print(
+            f"ERROR building context: "
+            f"{repr(e)}"
+        )
+
+        return (
+            "Unable to process the knowledge-base "
+            "information. Please try again."
+        )
+
+
+    # =====================================================
+    # STEP 7: CHECK CONTEXT
+    # =====================================================
+
+    if not context.strip():
+
+        print(
+            "WARNING: Qdrant returned no usable "
+            "text context"
+        )
+
+        return (
+            "I don't have enough information "
+            "in the provided manual."
+        )
+
+
+    # =====================================================
+    # DISPLAY RETRIEVED CONTEXT
+    # =====================================================
+
+    print(
+        "========== RETRIEVED CONTEXT =========="
+    )
+
+    print(context)
+
+    print(
+        "========================================"
+    )
+
+
+    # =====================================================
+    # STEP 8: CREATE STRICT RAG PROMPT
+    # =====================================================
+
+    prompt = create_rag_prompt(
+        question,
+        context
+    )
+
+
+    # =====================================================
+    # STEP 9: CALL GROQ
+    # =====================================================
+
+    try:
+
+        response = generate_answer(
+            prompt
+        )
+
+    except Exception as e:
+
+        print(
+            f"FATAL ERROR during Groq generation: "
+            f"{repr(e)}"
+        )
+
+        return (
+            "The AI service is temporarily unavailable. "
+            "Please try again."
+        )
+
+
+    # =====================================================
+    # STEP 10: EXTRACT ANSWER
+    # =====================================================
+
+    answer = extract_answer(
+        response
+    )
+
+    if not answer:
+
+        return (
+            "I don't have enough information "
+            "in the provided manual."
+        )
+
+
+    # =====================================================
+    # STEP 11: FINAL LOGGING
+    # =====================================================
+
+    total_time = (
+        time.time() - request_start_time
+    )
+
+    print("")
+    print("==========================================")
+    print("FINAL ANSWER")
+    print("==========================================")
 
     print(answer)
 
+    print("==========================================")
+
     print(
-        "=========================================="
+        f"Source documents: "
+        f"{source_names}"
     )
 
     print(
-        f"Source documents: {source_names}"
+        f"Best retrieval score: "
+        f"{best_score}"
     )
 
     print(
-        f"Best retrieval score: {best_score}"
+        f"Total request time: "
+        f"{total_time:.2f} seconds"
     )
 
     print(
@@ -757,6 +1162,5 @@ FINAL ANSWER:
     print(
         "=========================================="
     )
-
 
     return answer
