@@ -4,7 +4,7 @@
 
 <p align="center">
   <strong>⚡ Serverless AWS Lambda & RAG</strong><br>
-  <sub> **RAG • Qdrant Vector Search • Groq LLM • FastAPI • Docker • AWS Lambda • Amazon API Gateway • Amazon ECR • GitHub Actions CI/CD • DevOps • MLOps</sub>**
+  <srong> **RAG • Qdrant Vector Search • Groq LLM • FastAPI • Docker • AWS Lambda • Amazon API Gateway • Amazon ECR • GitHub Actions CI/CD • DevOps • MLOps</sub>**
 </p>
 ### 🌐 [LIVE DEMO](https://sugumarranganathan.github.io/Samsung-Washing-Machine-RAG-Chatbot/)
 
