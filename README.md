@@ -1,6 +1,6 @@
 <div align="center">
 
-### Samsung Washing Machine RAG Chatbot — Serverless AWS Lambda & RAG
+## Samsung Washing Machine RAG Chatbot — Serverless AWS Lambda & RAG 
 
 **RAG • Qdrant Vector Search • Groq LLM • FastAPI • Docker • AWS Lambda • Amazon API Gateway • Amazon ECR • GitHub Actions CI/CD • DevOps • MLOps**
 
