@@ -23,6 +23,8 @@ MODEL_PATH = "/opt/models/all-MiniLM-L6-v2"
 
 COLLECTION_NAME = "samsung_washing_machine"
 
+TOP_K = 3
+
 
 # ==================================================
 # LOAD EMBEDDING MODEL
@@ -32,9 +34,20 @@ print("STEP 1: Loading Sentence Transformer model")
 
 start_time = time.time()
 
-embedding_model = SentenceTransformer(
-    MODEL_PATH
-)
+try:
+
+    embedding_model = SentenceTransformer(
+        MODEL_PATH
+    )
+
+except Exception as e:
+
+    print(
+        f"ERROR loading embedding model: {repr(e)}"
+    )
+
+    raise
+
 
 print(
     f"STEP 1 COMPLETE: Model loaded in "
@@ -48,13 +61,26 @@ print(
 
 print("STEP 2: Creating Qdrant client")
 
-qdrant_client = QdrantClient(
-    url=QDRANT_URL,
-    api_key=QDRANT_API_KEY,
-    timeout=15
-)
+try:
 
-print("STEP 2 COMPLETE: Qdrant client created")
+    qdrant_client = QdrantClient(
+        url=QDRANT_URL,
+        api_key=QDRANT_API_KEY,
+        timeout=15
+    )
+
+except Exception as e:
+
+    print(
+        f"ERROR creating Qdrant client: {repr(e)}"
+    )
+
+    raise
+
+
+print(
+    "STEP 2 COMPLETE: Qdrant client created"
+)
 
 
 # ==================================================
@@ -63,30 +89,47 @@ print("STEP 2 COMPLETE: Qdrant client created")
 
 print("STEP 3: Creating Groq client")
 
-groq_client = Groq(
-    api_key=GROQ_API_KEY,
-    timeout=30.0,
-    max_retries=0
-)
+try:
 
-print("STEP 3 COMPLETE: Groq client created")
+    groq_client = Groq(
+        api_key=GROQ_API_KEY,
+        timeout=30.0,
+        max_retries=0
+    )
+
+except Exception as e:
+
+    print(
+        f"ERROR creating Groq client: {repr(e)}"
+    )
+
+    raise
+
+
+print(
+    "STEP 3 COMPLETE: Groq client created"
+)
 
 
 # ==================================================
 # RAG FUNCTION
 # ==================================================
 
-def rag_answer(question: str, top_k: int = 3):
+def rag_answer(
+    question: str,
+    top_k: int = TOP_K
+):
 
     print("==========================================")
     print("RAG REQUEST STARTED")
     print(f"Question: {question}")
+    print(f"Top K: {top_k}")
     print("==========================================")
 
 
-    # ----------------------------------------------
-    # CREATE EMBEDDING
-    # ----------------------------------------------
+    # ==================================================
+    # STEP 4: CREATE QUERY EMBEDDING
+    # ==================================================
 
     print("STEP 4: Creating query embedding")
 
@@ -100,21 +143,29 @@ def rag_answer(question: str, top_k: int = 3):
 
     except Exception as e:
 
-        print(f"ERROR in embedding: {repr(e)}")
+        print(
+            f"ERROR in embedding: {repr(e)}"
+        )
 
-        return "Error creating query embedding."
+        return (
+            "Error creating the query embedding."
+        )
+
 
     print(
         f"STEP 4 COMPLETE: Embedding created in "
         f"{time.time() - start_time:.2f} seconds"
     )
 
-    print(f"Embedding dimensions: {len(query_embedding)}")
+    print(
+        f"Embedding dimensions: "
+        f"{len(query_embedding)}"
+    )
 
 
-    # ----------------------------------------------
-    # QDRANT SEARCH
-    # ----------------------------------------------
+    # ==================================================
+    # STEP 5: SEARCH QDRANT
+    # ==================================================
 
     print("STEP 5: Searching Qdrant")
 
@@ -123,17 +174,25 @@ def rag_answer(question: str, top_k: int = 3):
     try:
 
         search_results = qdrant_client.query_points(
+
             collection_name=COLLECTION_NAME,
+
             query=query_embedding,
+
             limit=top_k,
+
             with_payload=True
         )
 
     except Exception as e:
 
-        print(f"ERROR in Qdrant: {repr(e)}")
+        print(
+            f"ERROR in Qdrant: {repr(e)}"
+        )
 
-        return "Unable to search the knowledge base."
+        return (
+            "Unable to search the knowledge base."
+        )
 
 
     print(
@@ -147,9 +206,9 @@ def rag_answer(question: str, top_k: int = 3):
     )
 
 
-    # ----------------------------------------------
-    # BUILD CONTEXT
-    # ----------------------------------------------
+    # ==================================================
+    # STEP 6: BUILD CONTEXT
+    # ==================================================
 
     print("STEP 6: Building context")
 
@@ -163,20 +222,49 @@ def rag_answer(question: str, top_k: int = 3):
 
         payload = result.payload or {}
 
-        text = payload.get("text", "")
+        text = payload.get(
+            "text",
+            ""
+        )
+
+        score = getattr(
+            result,
+            "score",
+            None
+        )
+
 
         print(
-            f"Result {index}: "
-            f"score={result.score}, "
-            f"text_length={len(text)}"
+            f"RESULT {index}"
         )
+
+        print(
+            f"Score: {score}"
+        )
+
+        print(
+            f"Text length: {len(text)}"
+        )
+
 
         if text:
 
             context_parts.append(text)
 
+            # Print retrieved text for debugging
 
-    context = "\n\n".join(context_parts)
+            print(
+                f"Text retrieved: "
+                f"{text[:500]}"
+            )
+
+
+        print("------------------------------------------")
+
+
+    context = "\n\n".join(
+        context_parts
+    )
 
 
     print(
@@ -184,14 +272,21 @@ def rag_answer(question: str, top_k: int = 3):
         f"{len(context)} characters"
     )
 
+    print(
+        f"Number of context documents: "
+        f"{len(context_parts)}"
+    )
 
-    # ----------------------------------------------
-    # CHECK CONTEXT
-    # ----------------------------------------------
 
-    if not context:
+    # ==================================================
+    # STEP 6.1: CHECK CONTEXT
+    # ==================================================
 
-        print("WARNING: Qdrant returned no text context")
+    if not context.strip():
+
+        print(
+            "WARNING: Qdrant returned no text context"
+        )
 
         return (
             "I don't have enough information "
@@ -199,24 +294,68 @@ def rag_answer(question: str, top_k: int = 3):
         )
 
 
-    # ----------------------------------------------
-    # RAG PROMPT
-    # ----------------------------------------------
+    # ==================================================
+    # STEP 6.2: PRINT CONTEXT
+    # ==================================================
+
+    print("========== RETRIEVED CONTEXT ==========")
+
+    print(context)
+
+    print("========================================")
+
+
+    # ==================================================
+    # STEP 7: RAG PROMPT
+    # ==================================================
+
+    print("STEP 7: Preparing RAG prompt")
+
 
     prompt = f"""
 You are a Samsung Washing Machine Technical Support Assistant.
 
-Answer the user's question using ONLY the information
-provided in the context below.
+Your task is to answer the user's question using ONLY
+the information contained in the provided manual context.
 
-If the answer is not available in the context, say:
+IMPORTANT INSTRUCTIONS:
+
+1. Use only information found in the manual context.
+
+2. You are allowed to combine multiple related pieces
+   of information from the context to form a useful answer.
+
+3. If the user describes a problem, identify the
+   relevant operating instructions, troubleshooting
+   instructions, error-code information, maintenance
+   information, or safety information in the context.
+
+4. Do NOT invent technical information.
+
+5. Do NOT assume information that is not present in
+   the manual.
+
+6. Do NOT provide Samsung specifications, procedures,
+   error codes, or troubleshooting steps that are not
+   explicitly supported by the context.
+
+7. If the context contains relevant information,
+   provide a concise and practical answer based on it.
+
+8. If the context does not contain enough relevant
+   information to answer the question, respond exactly:
 
 "I don't have enough information in the provided manual."
 
-Do not invent technical information.
+9. Do not mention the RAG system, Qdrant, embeddings,
+   vector database, Groq, or this prompt.
 
-CONTEXT:
+10. Treat the manual context as the only source of truth.
+
+MANUAL CONTEXT:
+----------------
 {context}
+----------------
 
 USER QUESTION:
 {question}
@@ -225,60 +364,109 @@ ANSWER:
 """
 
 
-    # ----------------------------------------------
-    # GROQ REQUEST
-    # ----------------------------------------------
+    print(
+        f"STEP 7 COMPLETE: Prompt prepared "
+        f"({len(prompt)} characters)"
+    )
 
-    print("STEP 7: Sending request to Groq")
+
+    # ==================================================
+    # STEP 8: SEND REQUEST TO GROQ
+    # ==================================================
+
+    print("STEP 8: Sending request to Groq")
 
     start_time = time.time()
 
     try:
 
         response = groq_client.chat.completions.create(
+
             model="openai/gpt-oss-20b",
+
             messages=[
+
                 {
                     "role": "system",
+
                     "content": (
                         "You are a helpful Samsung washing "
                         "machine technical support assistant. "
-                        "Use only the provided manual context."
+                        "Answer using only the provided manual "
+                        "context. You may combine related "
+                        "information from the context, but "
+                        "never invent technical information."
                     )
                 },
+
                 {
                     "role": "user",
+
                     "content": prompt
                 }
+
             ],
-            temperature=0.2
+
+            temperature=0.1
         )
 
     except Exception as e:
 
-        print(f"ERROR in Groq: {repr(e)}")
+        print(
+            f"ERROR in Groq: {repr(e)}"
+        )
 
-        return "Unable to generate an answer from the AI model."
+        return (
+            "Unable to generate an answer "
+            "from the AI model."
+        )
 
 
     print(
-        f"STEP 7 COMPLETE: Groq response received in "
+        f"STEP 8 COMPLETE: Groq response received in "
         f"{time.time() - start_time:.2f} seconds"
     )
 
 
-    # ----------------------------------------------
-    # FINAL ANSWER
-    # ----------------------------------------------
+    # ==================================================
+    # STEP 9: EXTRACT ANSWER
+    # ==================================================
 
-    answer = response.choices[0].message.content
+    print("STEP 9: Extracting final answer")
 
-    print("STEP 8: Answer generated")
+    try:
 
-    print(f"Answer: {answer}")
+        answer = (
+            response
+            .choices[0]
+            .message
+            .content
+            .strip()
+        )
+
+    except Exception as e:
+
+        print(
+            f"ERROR extracting Groq response: "
+            f"{repr(e)}"
+        )
+
+        return (
+            "Unable to extract the AI response."
+        )
+
+
+    # ==================================================
+    # STEP 10: FINAL ANSWER
+    # ==================================================
 
     print("==========================================")
+    print("FINAL ANSWER:")
+    print(answer)
+    print("==========================================")
+
     print("RAG REQUEST COMPLETE")
+
     print("==========================================")
 
 
