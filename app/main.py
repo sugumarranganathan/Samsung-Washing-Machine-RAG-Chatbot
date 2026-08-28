@@ -1,10 +1,14 @@
-
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from mangum import Mangum
 
 from app.rag import rag_answer
 
+
+# ==================================================
+# FASTAPI APPLICATION
+# ==================================================
 
 app = FastAPI(
     title="Samsung Washing Machine Technical Support AI",
@@ -13,9 +17,30 @@ app = FastAPI(
 )
 
 
+# ==================================================
+# CORS
+# ==================================================
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ==================================================
+# REQUEST MODEL
+# ==================================================
+
 class ChatRequest(BaseModel):
     query: str
 
+
+# ==================================================
+# HEALTH CHECK
+# ==================================================
 
 @app.get("/")
 def home():
@@ -23,6 +48,10 @@ def home():
         "message": "Samsung Washing Machine Technical Support AI is running"
     }
 
+
+# ==================================================
+# CHAT ENDPOINT
+# ==================================================
 
 @app.post("/chat")
 def chat(request: ChatRequest):
@@ -35,5 +64,8 @@ def chat(request: ChatRequest):
     }
 
 
-# AWS Lambda handler
+# ==================================================
+# AWS LAMBDA HANDLER
+# ==================================================
+
 handler = Mangum(app)
